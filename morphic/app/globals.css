@@ -1,0 +1,156 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 6%;
+
+    --card: 0 0% 99%;
+    --card-foreground: 0 0% 6%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 6%;
+
+    --primary: 0 0% 6%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 0 0% 97%;
+    --secondary-foreground: 0 0% 6%;
+
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+
+    --accent: 74 53% 51%; /* UNIMIG Green #8ac440 */
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 89%;
+    --input: 0 0% 89%;
+    --ring: 0 0% 6%;
+
+    --radius: 0.75rem;
+
+    --unimig-green: 74 53% 51%;
+  }
+
+  .dark {
+    --background: 0 0% 4%;
+    --foreground: 0 0% 95%;
+
+    --card: 0 0% 6%;
+    --card-foreground: 0 0% 90%;
+
+    --popover: 0 0% 5%;
+    --popover-foreground: 0 0% 95%;
+
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 6%;
+
+    --secondary: 0 0% 12%;
+    --secondary-foreground: 0 0% 95%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 0 0% 55%;
+
+    --accent: 74 53% 55%;
+    --accent-foreground: 0 0% 6%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 16%;
+    --input: 0 0% 16%;
+    --ring: 0 0% 90%;
+
+    --unimig-green: 74 53% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    background: linear-gradient(180deg, #fafafa 0%, #f0f4f0 50%, #fafafa 100%);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    @apply font-bold tracking-tight text-foreground;
+  }
+
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full transition-colors;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-muted-foreground/30;
+  }
+
+  /* Selection highlight */
+  ::selection {
+    background-color: hsl(var(--unimig-green) / 0.18);
+  }
+}
+
+@layer utilities {
+  /* Glass surface */
+  .glass {
+    @apply backdrop-blur-md bg-white/80 border border-border shadow-sm;
+  }
+
+  /* Hero area with subtle gradient mesh */
+  .hero-glow {
+    background: radial-gradient(ellipse 80% 50% at 50% 40%, hsl(var(--unimig-green) / 0.06) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 80%, hsl(var(--unimig-green) / 0.04) 0%, transparent 50%);
+  }
+
+  /* Gradient text for headings */
+  .text-gradient {
+    background: linear-gradient(135deg, hsl(var(--foreground)) 0%, hsl(var(--unimig-green)) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Focus ring using UNIMIG green */
+  .focus-glow:focus-within {
+    box-shadow: 0 0 0 3px hsl(var(--unimig-green) / 0.12);
+  }
+
+  /* Clean card style */
+  .card-clean {
+    @apply bg-card rounded-xl border border-border shadow-sm transition-shadow duration-200 hover:shadow-md;
+  }
+
+  /* Primary action button pattern */
+  .btn-primary {
+    @apply bg-foreground text-background rounded-2xl font-semibold hover:bg-foreground/90 transition-all duration-200 active:scale-[0.98];
+  }
+
+  /* Muted label */
+  .label-overline {
+    @apply text-xs font-semibold uppercase tracking-widest text-muted-foreground;
+  }
+}
