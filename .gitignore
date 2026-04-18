@@ -1,0 +1,57 @@
+RAGServer/myenv/
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+.qodo/
+# dependencies
+morphic/node_modules
+morphic/.pnp
+morphic/.pnp.js
+morphic/.yarn/install-state.gz
+
+# testing
+morphic/coverage
+
+# next.js
+morphic/.next/
+morphic/out/
+
+# production
+morphic/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+morphic/npm-debug.log*
+morphic/yarn-debug.log*
+morphic/yarn-error.log*
+
+# local env files
+morphic/.env*.local
+
+# vercel
+morphic/.vercel
+
+# typescript
+morphic/*.tsbuildinfo
+morphic/next-env.d.ts
+
+# cursor
+morphic/.cursor
+morphic/myenv
+
+# python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# databases
+*.db
+*.sqlite
+
+# logs and temp
+test_output.txt
+*.log
+

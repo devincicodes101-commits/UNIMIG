@@ -1,0 +1,15 @@
+fastapi==0.115.12
+langchain==0.3.23
+langchain-core==0.3.54
+langchain-text-splitters==0.3.8
+pinecone==6.0.2
+pydantic>=2.11.7
+PyPDF2==3.0.1
+supabase==2.28.0
+openai==1.75.0
+pandas==2.2.3
+pydub==0.25.1
+PyMuPDF==1.25.5
+python-docx==1.2.0
+uvicorn==0.34.2
+python-multipart==0.0.20
