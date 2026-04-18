@@ -1,7 +1,6 @@
 import { NextAuthOptions, getServerSession } from "next-auth";
-import GoogleProvider from "next-auth/providers/google";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { supabase } from "./supabase";
+import { supabase, supabaseAdmin } from "./supabase";
 import { z } from "zod";
 
 // ─────────────────────────────────────────────
@@ -37,8 +36,11 @@ declare module "next-auth/jwt" {
     id: string;
     role: UserRole;
     email: string;
+    roleRefreshedAt?: number;
   }
 }
+
+const ROLE_CACHE_MS = 5 * 60 * 1000; // re-check role from DB at most every 5 minutes
 
 // ─────────────────────────────────────────────
 // Allowed email domains
@@ -134,14 +136,45 @@ export const authOptions: NextAuthOptions = {
     strategy: "jwt",
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
-  debug: process.env.NODE_ENV === "development",
+  debug: false,
   providers: [
-    // ── Google OAuth (primary) ──────────────────
-    GoogleProvider({
-      clientId: process.env.GOOGLE_CLIENT_ID!,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
+    // ── Supabase OAuth bridge (Google sign-in goes through Supabase) ──
+    CredentialsProvider({
+      id: "supabase-oauth",
+      name: "Supabase OAuth",
+      credentials: {
+        access_token: { label: "Access Token", type: "text" },
+      },
+      async authorize(credentials) {
+        try {
+          if (!credentials?.access_token) return null;
+          console.log("[AUTH:supabase-oauth] Verifying Supabase access token");
+
+          // Use the admin client to verify the JWT — doesn't mutate the anon client's session.
+          const { data, error } = await supabaseAdmin.auth.getUser(
+            credentials.access_token
+          );
+
+          if (error || !data.user) {
+            console.error("[AUTH:supabase-oauth] Token verification failed:", error?.message);
+            return null;
+          }
+
+          const sUser = data.user;
+          const user = await getOrCreateUser(
+            sUser.id,
+            sUser.email!,
+            sUser.user_metadata?.full_name || sUser.user_metadata?.name || null
+          );
+          console.log("[AUTH:supabase-oauth] Bridge successful for:", user.email);
+          return user;
+        } catch (err: any) {
+          console.error("[AUTH:supabase-oauth] Unexpected error:", err);
+          return null;
+        }
+      },
     }),
-    // ── Credentials (local dev fallback) ────────
+    // ── Credentials (email/password via Supabase) ───
     CredentialsProvider({
       name: "Credentials",
       credentials: {
@@ -187,51 +220,47 @@ export const authOptions: NextAuthOptions = {
     }),
   ],
   callbacks: {
-    // ── Sign-in: allow any email domain ────────
-    async signIn({ user, account }) {
-      if (account?.provider === "google") {
-        if (!user.email) {
-          console.warn("Blocked sign-in: No email provided");
-          return "/auth/error?error=NoEmailProvided";
-        }
+    // ── Sign-in: allow all providers (email check handled upstream) ──
+    async signIn({ user }) {
+      if (!user.email) {
+        console.warn("Blocked sign-in: No email provided");
+        return "/auth/error?error=NoEmailProvided";
       }
       return true;
     },
 
-    // ── JWT: attach role to token ─────────────
-    async jwt({ token, user, account }) {
+    // ── JWT: attach role to token (cached; re-fetches at most every 5 min) ─────
+    async jwt({ token, user, account, trigger }) {
       if (user && account) {
-        // First sign-in — fetch/create user in DB
-        console.log("[AUTH] First sign-in for:", user.email);
         const dbUser = await getOrCreateUser(
           user.id || (token.sub as string),
           user.email!,
           user.name || null
         );
-        console.log("[AUTH] DB user on sign-in:", { id: dbUser.id, role: dbUser.role });
         token.id = dbUser.id;
         token.role = dbUser.role;
         token.email = dbUser.email;
-      } else if (token.email) {
-        // Subsequent requests — re-fetch role from DB
-        console.log("[AUTH] Re-fetching role for:", token.email);
-        console.log("[AUTH] Supabase URL in use:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-        try {
-          const { data, error } = await supabase
-            .from("users")
-            .select("role")
-            .eq("email", token.email)
-            .single();
-          console.log("[AUTH] Supabase result:", { data, error: error?.message });
-          if (data?.role) {
-            console.log("[AUTH] Role updated:", token.role, "->", data.role);
-            token.role = data.role as UserRole;
-          } else {
-            console.log("[AUTH] No role from DB, keeping:", token.role);
-          }
-        } catch (err) {
-          console.error("[AUTH] Supabase fetch threw:", err);
+        token.roleRefreshedAt = Date.now();
+        return token;
+      }
+
+      const stale = !token.roleRefreshedAt || Date.now() - token.roleRefreshedAt > ROLE_CACHE_MS;
+      if (!token.email || (!stale && trigger !== "update")) {
+        return token;
+      }
+
+      try {
+        const { data } = await supabase
+          .from("users")
+          .select("role")
+          .eq("email", token.email)
+          .single();
+        if (data?.role) {
+          token.role = data.role as UserRole;
         }
+        token.roleRefreshedAt = Date.now();
+      } catch {
+        // Keep existing role on transient errors; try again after cache expires.
       }
       return token;
     },

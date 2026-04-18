@@ -229,9 +229,9 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
     try:
         logger.debug(f"Generating embeddings for {len(texts)} texts")
         response = openai_client.embeddings.create(
-            model="text-embedding-3-small",
+            model="text-embedding-3-large",
             input=texts,
-            dimensions=1536,
+            dimensions=3072,
         )
         return [embedding.embedding for embedding in response.data]
     except Exception as e:

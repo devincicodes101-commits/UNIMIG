@@ -11,8 +11,6 @@ if (!supabaseAnonKey || supabaseAnonKey.includes('placeholder')) {
   console.error('[SUPABASE] ERROR: NEXT_PUBLIC_SUPABASE_ANON_KEY is not set or is a placeholder in .env.local')
 }
 
-console.log('[SUPABASE] Connecting to:', supabaseUrl)
-
 // Server-side admin client (service role key — more permissions)
 export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey)
 

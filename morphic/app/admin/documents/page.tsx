@@ -263,7 +263,7 @@ export default function AdminDocumentsPage() {
                 : 'text-background/50 hover:text-background'
                 }`}
             >
-              Raw Text
+              Paste Text / Transcript
             </button>
           </div>
         </div>
@@ -288,17 +288,20 @@ export default function AdminDocumentsPage() {
                     type="text"
                     value={uploadTextTitle}
                     onChange={(e) => setUploadTextTitle(e.target.value)}
-                    placeholder="e.g. Employee Handbook Intro"
+                    placeholder="e.g. Loom — New Onboarding Walkthrough"
                     className={inputClass}
                   />
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-background/60 mb-1.5">Content</label>
+                  <p className="text-xs text-background/50 mb-2">
+                    Paste raw text, notes, or a video transcript (Loom, Zoom, Meet, etc.). For Loom videos, use the &quot;Copy transcript&quot; option from the video menu.
+                  </p>
                   <textarea
                     value={uploadText}
                     onChange={(e) => setUploadText(e.target.value)}
-                    placeholder="Paste your raw text here..."
-                    className={`${inputClass} min-h-[120px] resize-y`}
+                    placeholder="Paste your text or video transcript here…"
+                    className={`${inputClass} min-h-[160px] resize-y`}
                   />
                 </div>
               </div>

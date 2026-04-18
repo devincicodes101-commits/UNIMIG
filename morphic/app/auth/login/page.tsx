@@ -5,6 +5,7 @@ import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Suspense } from "react";
+import { supabase } from "@/lib/supabase";
 
 function LoginContent() {
   const router = useRouter();
@@ -12,6 +13,7 @@ function LoginContent() {
   const callbackUrl = searchParams.get("callbackUrl") || "/";
   const error = searchParams.get("error");
   const registered = searchParams.get("registered") === "true";
+  const reset = searchParams.get("reset") === "true";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -47,7 +49,16 @@ function LoginContent() {
 
   const handleGoogleSignIn = async () => {
     setGoogleLoading(true);
-    await signIn("google", { callbackUrl });
+    const redirectTo = `${window.location.origin}/auth/bridge?callbackUrl=${encodeURIComponent(callbackUrl)}`;
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo },
+    });
+    if (error) {
+      setLocalError(error.message || "Google sign-in failed.");
+      setGoogleLoading(false);
+    }
+    // On success the browser is redirected to Google — no further action here.
   };
 
   const errorMessage =
@@ -79,6 +90,15 @@ function LoginContent() {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
           </svg>
           Registration successful! Please sign in.
+        </div>
+      )}
+
+      {reset && (
+        <div className="p-4 bg-green-50 border border-green-200 text-green-700 rounded-2xl text-sm flex items-center gap-3">
+          <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          Password updated. Sign in with your new password.
         </div>
       )}
 
@@ -142,9 +162,17 @@ function LoginContent() {
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground ml-1">
-            Password
-          </label>
+          <div className="flex items-center justify-between ml-1">
+            <label htmlFor="password" className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+              Password
+            </label>
+            <Link
+              href="/auth/forgot-password"
+              className="text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors underline underline-offset-2"
+            >
+              Forgot password?
+            </Link>
+          </div>
           <input
             id="password"
             name="password"
