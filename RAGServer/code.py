@@ -871,7 +871,7 @@ def generate_improved_response(question: str, ai_response: str, correct_response
     )
     return response.choices[0].message.content
 
-@app.post("/feedback/")
+@app.post("/feedback")
 async def process_feedback(feedback: FeedbackPayload):
     logger.info(f"[feedback] received correction for question: {feedback.question[:80]!r}")
     try:
@@ -898,7 +898,7 @@ async def process_feedback(feedback: FeedbackPayload):
         logger.error(f"[feedback] failed to process correction: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/list-feedback/")
+@app.get("/list-feedback")
 async def list_feedback(timestamp: str = None, limit: int = 10000):
     dummy_vector = [0.0] * 3072
     filter_dict = {"type": "feedback"}
@@ -925,16 +925,12 @@ async def list_feedback(timestamp: str = None, limit: int = 10000):
     ]
     return {"feedback_entries": feedback_entries, "count": len(feedback_entries)}
 
-@app.get("/list-feedback")
-async def list_feedback_no_slash(timestamp: str = None, limit: int = 10000):
-    return await list_feedback(timestamp, limit)
-
-@app.delete("/delete-feedback-by-id/")
+@app.delete("/delete-feedback-by-id")
 async def delete_feedback_by_id(vector_id: str):
     index.delete(ids=[vector_id], namespace="feedback-namespace")
     return {"message": f"Deleted feedback vector: {vector_id}"}
 
-@app.put("/update-feedback/")
+@app.put("/update-feedback")
 async def update_feedback(update_data: FeedbackUpdatePayload):
     logger.info(f"[feedback] update request for vector_id={update_data.vector_id} question={(update_data.question or '')[:80]!r}")
     try:

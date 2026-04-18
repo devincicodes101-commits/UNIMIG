@@ -67,7 +67,7 @@ export function FeedbackDialog({
     try {
       let res: Response
       if (mode === 'create') {
-        res = await fetch(`${RAG_URL}/feedback/`, {
+        res = await fetch(`${RAG_URL}/feedback`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -79,7 +79,7 @@ export function FeedbackDialog({
         })
       } else {
         if (!vectorId) throw new Error('vectorId is required in edit mode')
-        res = await fetch(`${RAG_URL}/update-feedback/`, {
+        res = await fetch(`${RAG_URL}/update-feedback`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
