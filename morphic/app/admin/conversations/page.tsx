@@ -15,6 +15,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/components/ui/use-toast'
+import { FeedbackDialog } from '@/components/feedback-dialog'
 
 const RAG_URL = process.env.NEXT_PUBLIC_RAG_SERVER_URL || 'http://localhost:8000'
 const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_SECRET_KEY || ''
@@ -40,6 +41,7 @@ export default function AdminConversationsPage() {
   const [expanded, setExpanded] = useState<number | null>(null)
   const [page, setPage] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState<{ open: boolean; id: number | null }>({ open: false, id: null })
+  const [feedbackTarget, setFeedbackTarget] = useState<Conversation | null>(null)
   const { toast } = useToast()
   const limit = 20
 
@@ -182,7 +184,13 @@ export default function AdminConversationsPage() {
                         ))}
                       </div>
                     )}
-                    <div className="flex justify-end">
+                    <div className="flex justify-end gap-4">
+                      <button
+                        onClick={() => setFeedbackTarget(conv)}
+                        className="text-xs text-foreground/80 hover:text-foreground transition-colors font-medium"
+                      >
+                        Submit correction
+                      </button>
                       <button onClick={() => handleDelete(conv.id)} className="text-xs text-red-400 hover:text-red-300 transition-colors font-medium">
                         Delete Log
                       </button>
@@ -215,6 +223,19 @@ export default function AdminConversationsPage() {
           </div>
         )}
       </div>
+
+      {feedbackTarget && (
+        <FeedbackDialog
+          open={!!feedbackTarget}
+          onOpenChange={open => {
+            if (!open) setFeedbackTarget(null)
+          }}
+          mode="create"
+          question={feedbackTarget.question}
+          originalResponse={feedbackTarget.answer}
+          onSaved={() => setFeedbackTarget(null)}
+        />
+      )}
 
       <AlertDialog open={confirmDelete.open} onOpenChange={(open) => setConfirmDelete(prev => ({ ...prev, open }))}>
         <AlertDialogContent>

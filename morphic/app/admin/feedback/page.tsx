@@ -13,6 +13,7 @@ import {
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
 import { useToast } from '@/components/ui/use-toast'
+import { FeedbackDialog } from '@/components/feedback-dialog'
 
 type FeedbackEntry = {
   vector_id: string
@@ -46,6 +47,7 @@ export default function AdminFeedbackPage() {
   const [total, setTotal] = useState(0)
   const [deleteModalOpen, setDeleteModalOpen] = useState(false)
   const [vectorToDelete, setVectorToDelete] = useState<string | null>(null)
+  const [editingEntry, setEditingEntry] = useState<FeedbackEntry | null>(null)
   const { toast } = useToast()
 
   const fetchFeedback = useCallback(async () => {
@@ -140,12 +142,20 @@ export default function AdminFeedbackPage() {
                     ID: {entry.vector_id}
                   </p>
                 </div>
-                <button
-                  onClick={() => handleDelete(entry.vector_id)}
-                  className="px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-red-500/20"
-                >
-                  Delete
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setEditingEntry(entry)}
+                    className="px-3 py-1.5 text-xs font-medium text-foreground/80 hover:bg-foreground/10 rounded-lg transition-colors border border-border/60"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDelete(entry.vector_id)}
+                    className="px-3 py-1.5 text-xs font-medium text-red-400 hover:bg-red-500/10 rounded-lg transition-colors border border-red-500/20"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
 
               {/* Card Body */}
@@ -191,6 +201,25 @@ export default function AdminFeedbackPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Edit Modal */}
+      {editingEntry && (
+        <FeedbackDialog
+          open={!!editingEntry}
+          onOpenChange={open => {
+            if (!open) setEditingEntry(null)
+          }}
+          mode="edit"
+          vectorId={editingEntry.vector_id}
+          question={editingEntry.question}
+          originalResponse={editingEntry.original_response}
+          initialCorrection={editingEntry.user_correction}
+          onSaved={() => {
+            setEditingEntry(null)
+            fetchFeedback()
+          }}
+        />
       )}
 
       {/* Confirmation Modal */}

@@ -275,6 +275,11 @@ async def query_vector_db(request: QueryRequest):
             top_k=2,
             include_metadata=True,
         )
+        if feedback_response.matches:
+            top_fb_score = feedback_response.matches[0].score
+            logger.info(f"[query] feedback-namespace hit: {len(feedback_response.matches)} matches for role={role} (top score={top_fb_score:.3f})")
+        else:
+            logger.info(f"[query] feedback-namespace: no matches for role={role}")
 
         # Query each allowed namespace
         all_matches = list(feedback_response.matches)
@@ -546,7 +551,7 @@ async def list_documents(namespace: Optional[str] = None):
                 target_namespaces = VALID_NAMESPACES
 
         all_docs = []
-        dummy_vector = [0.0] * 1536
+        dummy_vector = [0.0] * 3072
 
         for ns in target_namespaces:
             if ns in ["feedback-namespace", "training-namespace"]:
@@ -803,7 +808,7 @@ async def upload_docx(
 async def delete_by_timestamp(timestamp: str, namespace: str):
     # No longer strictly enforcing VALID_NAMESPACES
     try:
-        dummy_vector = [0.0] * 1536
+        dummy_vector = [0.0] * 3072
         query_response = index.query(
             vector=dummy_vector,
             filter={"timestamp": timestamp},
@@ -824,7 +829,7 @@ async def delete_by_filename(filename: str, namespace: str):
     """Delete all vectors for a given filename from a namespace."""
     # No longer strictly enforcing VALID_NAMESPACES
     try:
-        dummy_vector = [0.0] * 1536
+        dummy_vector = [0.0] * 3072
         query_response = index.query(
             vector=dummy_vector,
             filter={"filename": filename},
@@ -868,6 +873,7 @@ def generate_improved_response(question: str, ai_response: str, correct_response
 
 @app.post("/feedback/")
 async def process_feedback(feedback: FeedbackPayload):
+    logger.info(f"[feedback] received correction for question: {feedback.question[:80]!r}")
     try:
         improved_response = generate_improved_response(
             feedback.question, feedback.ai_response, feedback.correct_response
@@ -886,13 +892,15 @@ async def process_feedback(feedback: FeedbackPayload):
             "is_correction": True,
         }
         index.upsert(vectors=[{"id": vector_id, "values": embedding, "metadata": metadata}], namespace="feedback-namespace")
+        logger.info(f"[feedback] upserted vector_id={vector_id} to feedback-namespace")
         return {"message": "Feedback processed", "improved_response": improved_response, "vector_id": vector_id}
     except Exception as e:
+        logger.error(f"[feedback] failed to process correction: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/list-feedback/")
 async def list_feedback(timestamp: str = None, limit: int = 10000):
-    dummy_vector = [0.0] * 1536
+    dummy_vector = [0.0] * 3072
     filter_dict = {"type": "feedback"}
     if timestamp:
         filter_dict["timestamp"] = timestamp
@@ -928,38 +936,47 @@ async def delete_feedback_by_id(vector_id: str):
 
 @app.put("/update-feedback/")
 async def update_feedback(update_data: FeedbackUpdatePayload):
-    dummy_vector = [0.0] * 1536
-    query_response = index.query(
-        vector=dummy_vector,
-        filter={"id": update_data.vector_id},
-        namespace="feedback-namespace",
-        top_k=1,
-        include_metadata=True,
-    )
-    if not query_response.matches:
-        raise HTTPException(status_code=404, detail=f"Feedback {update_data.vector_id} not found")
-
-    existing_metadata = dict(query_response.matches[0].metadata)
-    if update_data.question:
-        existing_metadata["question"] = update_data.question
-    if update_data.ai_response:
-        existing_metadata["original_response"] = update_data.ai_response
-    if update_data.correct_response:
-        existing_metadata["user_correction"] = update_data.correct_response
-    if update_data.improved_response:
-        existing_metadata["improved_response"] = update_data.improved_response
-    elif any([update_data.question, update_data.ai_response, update_data.correct_response]):
-        existing_metadata["improved_response"] = generate_improved_response(
-            existing_metadata.get("question"),
-            existing_metadata.get("original_response"),
-            existing_metadata.get("user_correction"),
+    logger.info(f"[feedback] update request for vector_id={update_data.vector_id} question={(update_data.question or '')[:80]!r}")
+    try:
+        dummy_vector = [0.0] * 3072
+        query_response = index.query(
+            vector=dummy_vector,
+            filter={"id": update_data.vector_id},
+            namespace="feedback-namespace",
+            top_k=1,
+            include_metadata=True,
         )
+        if not query_response.matches:
+            logger.warning(f"[feedback] update failed — vector_id={update_data.vector_id} not found")
+            raise HTTPException(status_code=404, detail=f"Feedback {update_data.vector_id} not found")
 
-    updated_context = f"Question: {existing_metadata.get('question')}\nImproved Response: {existing_metadata.get('improved_response')}"
-    existing_metadata["text"] = updated_context
-    new_embedding = generate_embeddings([updated_context])[0]
-    index.upsert(vectors=[{"id": update_data.vector_id, "values": new_embedding, "metadata": existing_metadata}], namespace="feedback-namespace")
-    return {"message": f"Updated feedback {update_data.vector_id}"}
+        existing_metadata = dict(query_response.matches[0].metadata)
+        if update_data.question:
+            existing_metadata["question"] = update_data.question
+        if update_data.ai_response:
+            existing_metadata["original_response"] = update_data.ai_response
+        if update_data.correct_response:
+            existing_metadata["user_correction"] = update_data.correct_response
+        if update_data.improved_response:
+            existing_metadata["improved_response"] = update_data.improved_response
+        elif any([update_data.question, update_data.ai_response, update_data.correct_response]):
+            existing_metadata["improved_response"] = generate_improved_response(
+                existing_metadata.get("question"),
+                existing_metadata.get("original_response"),
+                existing_metadata.get("user_correction"),
+            )
+
+        updated_context = f"Question: {existing_metadata.get('question')}\nImproved Response: {existing_metadata.get('improved_response')}"
+        existing_metadata["text"] = updated_context
+        new_embedding = generate_embeddings([updated_context])[0]
+        index.upsert(vectors=[{"id": update_data.vector_id, "values": new_embedding, "metadata": existing_metadata}], namespace="feedback-namespace")
+        logger.info(f"[feedback] re-embedded and upserted vector_id={update_data.vector_id}")
+        return {"message": f"Updated feedback {update_data.vector_id}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[feedback] update failed for vector_id={update_data.vector_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────
 # Health Check
