@@ -105,12 +105,12 @@ ROLE_NAMESPACES: Dict[str, List[str]] = {
 }
 
 DEFAULT_SYSTEM_PROMPTS: Dict[str, str] = {
-    "sales": "You are an internal sales assistant. You have access to the 'sales-namespace' and 'general-namespace'. Help sales team members with product information, pricing, and customer-facing queries using your specific knowledge bases. If asked about operations, support, accounting, or anything outside sales, politely reply: 'I apologize, but as a Sales assistant, I am not eligible to access that information.'",
-    "support": "You are an internal support assistant. You have access to the 'support-namespace' and 'general-namespace'. Help support agents resolve customer issues using product knowledge and escalation workflows. If asked about sales, operations, accounting, or anything outside support, politely reply: 'I apologize, but as a Support assistant, I am not eligible to access that information.'",
-    "operations": "You are an internal operations assistant. You have access to the 'operations-namespace' and 'general-namespace'. Help operations staff with SOPs, internal policies, and process documentation. If asked about sales, support, accounting, or anything outside operations, politely reply: 'I apologize, but as an Operations assistant, I am not eligible to access that information.'",
-    "accounting": "You are an internal accounting assistant. You have access to the 'accounting-namespace'. Help accounting staff with financial workflows, policies, and procedures. If asked about sales, support, operations, or anything outside accounting, politely reply: 'I apologize, but as an Accounting assistant, I am not eligible to access that information.'",
-    "management": "You are an internal management assistant with broad access. You have access to 'sales-namespace', 'support-namespace', 'operations-namespace', 'accounting-namespace', and 'general-namespace'. You can answer questions across all these domains. Politely decline questions regarding domains not listed here.",
-    "admin": "You are the internal admin assistant with full access. You can answer questions across all departments."
+    "sales": "Focus on sales workflows: product info, pricing, customer-facing positioning, and CRM playbooks. Lean on the sales and general knowledge bases first. Help with cross-functional questions when the knowledge base supports it.",
+    "support": "Focus on support workflows: product troubleshooting, escalation paths, customer-facing answers. Lean on the support and general knowledge bases first. Help with cross-functional questions when the knowledge base supports it.",
+    "operations": "Focus on operations workflows: SOPs, internal policies, process documentation, and tooling. Lean on the operations and general knowledge bases first. Help with cross-functional questions when the knowledge base supports it.",
+    "accounting": "Focus on accounting workflows: invoicing, payment processing, financial policies, reporting. Lean on the accounting knowledge base first. Help with cross-functional questions when the knowledge base supports it.",
+    "management": "You have broad access across sales, support, operations, accounting, and general namespaces. Help managers with strategic and cross-departmental questions.",
+    "admin": "You have full access across all departments. Help admins with anything in the company knowledge base."
 }
 
 # ─────────────────────────────────────────────
@@ -130,6 +130,52 @@ if SUPABASE_URL and SUPABASE_KEY:
         logger.error(f"Failed to initialize Supabase client: {str(e)}")
 else:
     logger.warning("Supabase credentials not found. Falling back to local storage (not recommended for production).")
+
+# ─────────────────────────────────────────────
+# Supabase Storage (original-file archive + viewer)
+# ─────────────────────────────────────────────
+STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "uploaded-documents")
+
+def _safe_storage_path(namespace: str, filename: str, timestamp: Optional[str]) -> str:
+    """Build a stable storage path. Timestamp prefix avoids name collisions on re-upload."""
+    ts = (timestamp or datetime.now().isoformat()).replace(":", "-").replace("/", "-")
+    safe_name = filename.replace("/", "_").replace("\\", "_")
+    return f"{namespace}/{ts}__{safe_name}"
+
+def archive_original_file(
+    namespace: str,
+    filename: str,
+    content_bytes: bytes,
+    content_type: str,
+    timestamp: Optional[str] = None,
+) -> Optional[str]:
+    """Upload the original file to Supabase Storage. Returns storage path (or None on failure).
+
+    Failure is non-fatal — callers should still index to Pinecone so search keeps working.
+    """
+    if not supabase:
+        return None
+    try:
+        path = _safe_storage_path(namespace, filename, timestamp)
+        supabase.storage.from_(STORAGE_BUCKET).upload(
+            path=path,
+            file=content_bytes,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+        logger.info(f"[storage] archived {filename} → {STORAGE_BUCKET}/{path}")
+        return path
+    except Exception as e:
+        logger.warning(f"[storage] archive failed for {filename}: {str(e)}")
+        return None
+
+def delete_archived_file(storage_path: Optional[str]) -> None:
+    if not supabase or not storage_path:
+        return
+    try:
+        supabase.storage.from_(STORAGE_BUCKET).remove([storage_path])
+        logger.info(f"[storage] deleted {STORAGE_BUCKET}/{storage_path}")
+    except Exception as e:
+        logger.warning(f"[storage] delete failed for {storage_path}: {str(e)}")
 
 # ─────────────────────────────────────────────
 # Text Splitter
@@ -157,9 +203,15 @@ def init_conversations_db():
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 sources TEXT,
-                timestamp TEXT NOT NULL
+                timestamp TEXT NOT NULL,
+                chat_id TEXT
             )
         """)
+        # Back-compat: add chat_id column if missing on older DBs
+        try:
+            cursor.execute("ALTER TABLE conversations ADD COLUMN chat_id TEXT")
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         conn.close()
         logger.info("Local Conversations DB initialized")
@@ -256,6 +308,7 @@ class ConversationLog(BaseModel):
     answer: str
     sources: Optional[List[str]] = []
     timestamp: str
+    chat_id: Optional[str] = None
 
 class PromptUpdatePayload(BaseModel):
     prompt: str
@@ -365,39 +418,35 @@ async def log_conversation(log: ConversationLog):
                     "question": log.question,
                     "answer": log.answer,
                     "sources": log.sources or [],
-                    "timestamp": log.timestamp
+                    "timestamp": log.timestamp,
+                    "chat_id": log.chat_id,
                 }).execute()
-                logger.info(f"Logged conversation to Supabase for user={log.user_id}")
+                logger.info(f"Logged conversation to Supabase for user={log.user_id} chat={log.chat_id}")
+                return {"message": "Conversation logged"}
             except Exception as e:
                 logger.error(f"Error logging to Supabase: {str(e)}")
-                # Fall through to local if Supabase fails?
 
-        # 2. Always log to local as backup if accessible
-        try:
-            conn = sqlite3.connect(CONVERSATIONS_DB)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO conversations (user_id, user_email, role, question, answer, sources, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (
-                log.user_id,
-                log.user_email,
-                log.role,
-                log.question,
-                log.answer,
-                json.dumps(log.sources or []),
-                log.timestamp,
-            ))
-            conn.commit()
-            log_id = cursor.lastrowid
-            conn.close()
-            logger.info(f"Logged conversation id={log_id} to local SQLite as backup")
-            return {"message": "Conversation logged", "id": log_id}
-        except Exception as local_err:
-             if not supabase: # If no supabase, this is a real failure
-                 raise local_err
-             logger.warning(f"Local logging failed, but Supabase may have succeeded: {str(local_err)}")
-             return {"message": "Conversation logged (Supabase only)"}
+        # 2. Local SQLite fallback
+        conn = sqlite3.connect(CONVERSATIONS_DB)
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO conversations (user_id, user_email, role, question, answer, sources, timestamp, chat_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            log.user_id,
+            log.user_email,
+            log.role,
+            log.question,
+            log.answer,
+            json.dumps(log.sources or []),
+            log.timestamp,
+            log.chat_id,
+        ))
+        conn.commit()
+        log_id = cursor.lastrowid
+        conn.close()
+        logger.info(f"Logged conversation id={log_id} to local SQLite")
+        return {"message": "Conversation logged", "id": log_id}
 
     except Exception as e:
         logger.error(f"Error logging conversation: {str(e)}")
@@ -406,6 +455,41 @@ async def log_conversation(log: ConversationLog):
 # ─────────────────────────────────────────────
 # ADMIN — Conversation Logs (QA Review)
 # ─────────────────────────────────────────────
+def _group_rows_into_chats(rows: List[dict]) -> List[dict]:
+    """Collapse flat log rows into chat sessions keyed by chat_id.
+
+    Rows without chat_id are treated as their own single-turn 'chat' so old
+    data still shows up. Returns sessions sorted by last-activity descending.
+    """
+    sessions: Dict[str, dict] = {}
+    for row in rows:
+        key = row.get("chat_id") or f"legacy-{row.get('id')}"
+        sess = sessions.get(key)
+        if sess is None:
+            sess = {
+                "chat_id": key,
+                "user_id": row.get("user_id"),
+                "user_email": row.get("user_email"),
+                "role": row.get("role"),
+                "first_question": row.get("question"),
+                "last_activity": row.get("timestamp"),
+                "message_count": 0,
+                "messages": [],
+            }
+            sessions[key] = sess
+        sess["messages"].append(row)
+        sess["message_count"] += 1
+        ts = row.get("timestamp") or ""
+        if ts > (sess["last_activity"] or ""):
+            sess["last_activity"] = ts
+
+    for sess in sessions.values():
+        sess["messages"].sort(key=lambda r: (r.get("timestamp") or "", r.get("id") or 0))
+        if sess["messages"]:
+            sess["first_question"] = sess["messages"][0].get("question") or sess["first_question"]
+
+    return sorted(sessions.values(), key=lambda s: s["last_activity"] or "", reverse=True)
+
 @app.get("/admin/conversations", dependencies=[Depends(require_admin_key)])
 async def get_conversations(
     role: Optional[str] = None,
@@ -413,93 +497,89 @@ async def get_conversations(
     limit: int = 50,
     offset: int = 0,
 ):
+    """Return chat sessions (grouped by chat_id) with their full message threads."""
     try:
-        # 1. Try Supabase
+        rows: List[dict] = []
         if supabase:
             try:
-                query = supabase.table("conversation_logs").select("*", count="exact")
+                query = supabase.table("conversation_logs").select("*")
                 if role:
                     query = query.eq("role", role)
                 if user_id:
                     query = query.eq("user_id", user_id)
-                
-                response = query.order("id", desc=True).range(offset, offset + limit - 1).execute()
-                
-                # Format sources to list if they aren't already (Supabase JSONB should be list)
-                rows = response.data
-                total = response.count
-                
-                return {"conversations": rows, "total": total, "limit": limit, "offset": offset}
+                response = query.order("id", desc=True).limit(2000).execute()
+                rows = response.data or []
             except Exception as e:
                 logger.error(f"Error retrieving from Supabase: {str(e)}")
 
-        # 2. Local SQLite Fallback
-        conn = sqlite3.connect(CONVERSATIONS_DB)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
+        if not rows:
+            conn = sqlite3.connect(CONVERSATIONS_DB)
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            q = "SELECT * FROM conversations WHERE 1=1"
+            params: List = []
+            if role:
+                q += " AND role = ?"
+                params.append(role)
+            if user_id:
+                q += " AND user_id = ?"
+                params.append(user_id)
+            q += " ORDER BY id DESC LIMIT 2000"
+            cursor.execute(q, params)
+            rows = [dict(r) for r in cursor.fetchall()]
+            conn.close()
+            for r in rows:
+                try:
+                    r["sources"] = json.loads(r.get("sources") or "[]")
+                except Exception:
+                    r["sources"] = []
 
-        query = "SELECT * FROM conversations WHERE 1=1"
-        params = []
-        if role:
-            query += " AND role = ?"
-            params.append(role)
-        if user_id:
-            query += " AND user_id = ?"
-            params.append(user_id)
-        query += " ORDER BY id DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-
-        cursor.execute(query, params)
-        rows = [dict(row) for row in cursor.fetchall()]
-
-        # Parse sources JSON
-        for row in rows:
-            try:
-                row["sources"] = json.loads(row.get("sources", "[]"))
-            except Exception:
-                row["sources"] = []
-
-        count_query = "SELECT COUNT(*) FROM conversations WHERE 1=1"
-        count_params = []
-        if role:
-            count_query += " AND role = ?"
-            count_params.append(role)
-        if user_id:
-            count_query += " AND user_id = ?"
-            count_params.append(user_id)
-
-        cursor.execute(count_query, count_params)
-        total = cursor.fetchone()[0]
-        conn.close()
-
-        return {"conversations": rows, "total": total, "limit": limit, "offset": offset}
+        sessions = _group_rows_into_chats(rows)
+        total = len(sessions)
+        page = sessions[offset: offset + limit]
+        return {"conversations": page, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
         logger.error(f"Error retrieving conversations: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error retrieving conversations: {str(e)}")
 
-@app.delete("/admin/conversations/{conversation_id}", dependencies=[Depends(require_admin_key)])
-async def delete_conversation(conversation_id: int):
+@app.delete("/admin/conversations/{chat_id}", dependencies=[Depends(require_admin_key)])
+async def delete_conversation_chat(chat_id: str):
+    """Delete a full chat session (all rows with the given chat_id).
+
+    For legacy rows without a chat_id, the frontend sends `legacy-<row_id>` and
+    we delete the single row by numeric id.
+    """
     try:
-        # 1. Try Supabase
+        legacy_id: Optional[int] = None
+        if chat_id.startswith("legacy-"):
+            try:
+                legacy_id = int(chat_id.split("-", 1)[1])
+            except ValueError:
+                legacy_id = None
+
         if supabase:
             try:
-                supabase.table("conversation_logs").delete().eq("id", conversation_id).execute()
-                logger.info(f"Deleted conversation {conversation_id} from Supabase")
+                if legacy_id is not None:
+                    supabase.table("conversation_logs").delete().eq("id", legacy_id).execute()
+                else:
+                    supabase.table("conversation_logs").delete().eq("chat_id", chat_id).execute()
+                logger.info(f"Deleted chat {chat_id} from Supabase")
             except Exception as e:
                 logger.error(f"Error deleting from Supabase: {str(e)}")
 
-        # 2. Local Fallback
         try:
             conn = sqlite3.connect(CONVERSATIONS_DB)
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+            if legacy_id is not None:
+                cursor.execute("DELETE FROM conversations WHERE id = ?", (legacy_id,))
+            else:
+                cursor.execute("DELETE FROM conversations WHERE chat_id = ?", (chat_id,))
             conn.commit()
             conn.close()
-            return {"message": f"Conversation {conversation_id} deleted"}
         except Exception as local_err:
             if not supabase:
                 raise local_err
-            return {"message": f"Conversation {conversation_id} deleted (Supabase only)"}
+        return {"message": f"Chat {chat_id} deleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -594,6 +674,8 @@ async def list_documents(namespace: Optional[str] = None):
                         "namespace": ns,
                         "timestamp": ts,
                         "chunk_count": chunk_count,
+                        "storage_path": match.metadata.get("storage_path"),
+                        "content_type": match.metadata.get("content_type"),
                     })
             except Exception as ns_err:
                 logger.warning(f"Could not query namespace {ns}: {str(ns_err)}")
@@ -601,6 +683,26 @@ async def list_documents(namespace: Optional[str] = None):
         return {"documents": all_docs, "total": len(all_docs)}
     except Exception as e:
         logger.error(f"Error listing documents: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/admin/document-url", dependencies=[Depends(require_admin_key)])
+async def get_document_view_url(storage_path: str, expires_in: int = 300):
+    """Mint a short-lived signed URL for viewing an archived original.
+
+    The bucket should be PRIVATE; this endpoint is the only way to access files.
+    """
+    if not supabase:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    try:
+        result = supabase.storage.from_(STORAGE_BUCKET).create_signed_url(storage_path, expires_in)
+        signed_url = result.get("signedURL") or result.get("signed_url") or result.get("signedUrl")
+        if not signed_url:
+            raise HTTPException(status_code=500, detail="Failed to mint signed URL")
+        return {"url": signed_url, "expires_in": expires_in}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[storage] signed URL error for {storage_path}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # ─────────────────────────────────────────────
@@ -625,6 +727,10 @@ async def upload_pdf(
 
     try:
         content = await file.read()
+
+        storage_path = archive_original_file(
+            namespace, file.filename, content, "application/pdf", timestamp
+        )
 
         import fitz
         text = ""
@@ -655,6 +761,9 @@ async def upload_pdf(
             }
             if timestamp:
                 metadata["timestamp"] = timestamp
+            if storage_path:
+                metadata["storage_path"] = storage_path
+                metadata["content_type"] = "application/pdf"
 
             vectors.append({
                 "id": f"pdf_{namespace}_{file.filename}_{i}",
@@ -705,6 +814,10 @@ async def upload_text(
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text could be extracted from the file")
 
+        storage_path = archive_original_file(
+            namespace, file.filename, content_bytes, "text/plain; charset=utf-8", timestamp
+        )
+
         chunks = text_splitter.split_text(text)
         chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
         logger.info(f"Split into {len(chunks)} chunks")
@@ -722,6 +835,9 @@ async def upload_text(
             }
             if timestamp:
                 metadata["timestamp"] = timestamp
+            if storage_path:
+                metadata["storage_path"] = storage_path
+                metadata["content_type"] = "text/plain; charset=utf-8"
 
             vectors.append({
                 "id": f"text_{namespace}_{file.filename}_{i}",
@@ -769,10 +885,20 @@ async def upload_docx(
     try:
         import docx
         import io
-        
+
         content = await file.read()
+
+        docx_content_type = (
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            if file.filename.lower().endswith(".docx")
+            else "application/msword"
+        )
+        storage_path = archive_original_file(
+            namespace, file.filename, content, docx_content_type, timestamp
+        )
+
         doc = docx.Document(io.BytesIO(content))
-        
+
         text = "\n".join([paragraph.text for paragraph in doc.paragraphs if paragraph.text])
 
         if not text.strip():
@@ -795,6 +921,9 @@ async def upload_docx(
             }
             if timestamp:
                 metadata["timestamp"] = timestamp
+            if storage_path:
+                metadata["storage_path"] = storage_path
+                metadata["content_type"] = docx_content_type
 
             vectors.append({
                 "id": f"docx_{namespace}_{file.filename}_{i}",
@@ -843,8 +972,7 @@ async def delete_by_timestamp(timestamp: str, namespace: str):
 
 @app.delete("/delete-by-filename", dependencies=[Depends(require_admin_key)])
 async def delete_by_filename(filename: str, namespace: str):
-    """Delete all vectors for a given filename from a namespace."""
-    # No longer strictly enforcing VALID_NAMESPACES
+    """Delete all vectors for a given filename from a namespace + the archived original."""
     try:
         dummy_vector = [0.0] * 3072
         query_response = index.query(
@@ -857,7 +985,17 @@ async def delete_by_filename(filename: str, namespace: str):
         vector_ids = [match.id for match in query_response.matches]
         if not vector_ids:
             return {"message": f"No vectors found for filename '{filename}' in {namespace}"}
+
+        # Collect distinct storage paths before deleting vectors, then clean up originals.
+        storage_paths = {
+            m.metadata.get("storage_path")
+            for m in query_response.matches
+            if m.metadata.get("storage_path")
+        }
         index.delete(ids=vector_ids, namespace=namespace)
+        for sp in storage_paths:
+            delete_archived_file(sp)
+
         return {"message": f"Deleted '{filename}' ({len(vector_ids)} vectors) from {namespace}", "vectors_deleted": len(vector_ids)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

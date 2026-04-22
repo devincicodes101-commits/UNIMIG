@@ -13,7 +13,6 @@ export type AnswerSectionProps = {
   chatId?: string
   showActions?: boolean
   isCorrected?: boolean
-  question?: string
 }
 
 export function AnswerSection({
@@ -22,8 +21,7 @@ export function AnswerSection({
   onOpenChange,
   chatId,
   showActions = true, // Default to true for backward compatibility
-  isCorrected = false,
-  question = ''
+  isCorrected = false
 }: AnswerSectionProps) {
   const enableShare = process.env.NEXT_PUBLIC_ENABLE_SHARE === 'true'
 
@@ -42,7 +40,6 @@ export function AnswerSection({
           message={content}
           chatId={chatId}
           enableShare={enableShare}
-          question={question}
         />
       )}
     </div>

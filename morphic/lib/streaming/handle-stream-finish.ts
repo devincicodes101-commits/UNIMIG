@@ -108,6 +108,7 @@ export async function handleStreamFinish({
           answer: answer,
           sources: extractedSources,
           timestamp: new Date().toISOString(),
+          chat_id: chatId,
         }),
       }).catch(err => console.error('[handleStreamFinish] Failed to log conversation to RAG backend:', err))
     }

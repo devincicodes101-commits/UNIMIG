@@ -109,30 +109,19 @@ export function ChatMessages({
 
   return (
     <div className="relative mx-auto px-4 w-full">
-      {messages.map((message, idx) => {
-        let precedingQuestion = ''
-        for (let i = idx - 1; i >= 0; i--) {
-          if (messages[i].role === 'user') {
-            const c = messages[i].content
-            precedingQuestion = typeof c === 'string' ? c : ''
-            break
-          }
-        }
-        return (
-          <div key={message.id} className="mb-4 flex flex-col gap-4">
-            <RenderMessage
-              message={message}
-              messageId={message.id}
-              getIsOpen={getIsOpen}
-              onOpenChange={handleOpenChange}
-              onQuerySelect={onQuerySelect}
-              chatId={chatId}
-              addToolResult={addToolResult}
-              precedingQuestion={precedingQuestion}
-            />
-          </div>
-        )
-      })}
+      {messages.map(message => (
+        <div key={message.id} className="mb-4 flex flex-col gap-4">
+          <RenderMessage
+            message={message}
+            messageId={message.id}
+            getIsOpen={getIsOpen}
+            onOpenChange={handleOpenChange}
+            onQuerySelect={onQuerySelect}
+            chatId={chatId}
+            addToolResult={addToolResult}
+          />
+        </div>
+      ))}
       {showLoading &&
         (lastToolData ? (
           <ToolSection

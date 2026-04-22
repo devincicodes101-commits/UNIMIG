@@ -13,7 +13,6 @@ interface RenderMessageProps {
   onQuerySelect: (query: string) => void
   chatId?: string
   addToolResult?: (params: { toolCallId: string; result: any }) => void
-  precedingQuestion?: string
 }
 
 export function RenderMessage({
@@ -23,8 +22,7 @@ export function RenderMessage({
   onOpenChange,
   onQuerySelect,
   chatId,
-  addToolResult,
-  precedingQuestion = ''
+  addToolResult
 }: RenderMessageProps) {
   // Render for manual tool call
   const toolData = useMemo(() => {
@@ -130,7 +128,6 @@ export function RenderMessage({
                 chatId={chatId}
                 showActions={isLastPart}
                 isCorrected={isCorrected}
-                question={precedingQuestion}
               />
             )
           case 'reasoning':
@@ -161,7 +158,6 @@ export function RenderMessage({
           chatId={chatId}
           showActions={true}
           isCorrected={isCorrected}
-          question={precedingQuestion}
         />
       )}
     </>

@@ -27,6 +27,8 @@ interface DocEntry {
   namespace: string
   chunk_count: number
   timestamp: string
+  storage_path?: string | null
+  content_type?: string | null
 }
 
 const DEFAULT_NAMESPACES: Namespace[] = [
@@ -43,12 +45,12 @@ export default function AdminDocumentsPage() {
   const [loading, setLoading] = useState(false)
   const [filterNs, setFilterNs] = useState('')
   const [inputType, setInputType] = useState<'file' | 'text'>('file')
-  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploadFiles, setUploadFiles] = useState<File[]>([])
   const [uploadText, setUploadText] = useState('')
   const [uploadTextTitle, setUploadTextTitle] = useState('')
   const [uploadNs, setUploadNs] = useState('general-namespace')
   const [uploading, setUploading] = useState(false)
-  const [uploadResult, setUploadResult] = useState<string>('')
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<string | null>(null)
   const { toast } = useToast()
 
@@ -103,71 +105,87 @@ export default function AdminDocumentsPage() {
     fetchDocs() 
   }, [fetchDocs, fetchNamespaces])
 
+  const endpointForFile = (name: string) => {
+    const lower = name.toLowerCase()
+    if (lower.endsWith('.pdf')) return `${RAG_URL}/upload-pdf`
+    if (lower.endsWith('.doc') || lower.endsWith('.docx')) return `${RAG_URL}/upload-docx`
+    return `${RAG_URL}/upload-text`
+  }
+
+  const uploadOne = async (file: File | Blob, fileName: string) => {
+    const form = new FormData()
+    form.append('timestamp', new Date().toISOString())
+    form.append('namespace', uploadNs)
+    form.append('file', file, fileName)
+    const res = await fetch(endpointForFile(fileName), {
+      method: 'POST',
+      headers: { 'X-Admin-Key': ADMIN_KEY },
+      body: form,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.detail || `Upload failed for ${fileName}`)
+    return { fileName, chunks: data.chunks_stored ?? 0 }
+  }
+
   const handleUpload = async () => {
-    if (inputType === 'file' && !uploadFile) return
+    if (inputType === 'file' && uploadFiles.length === 0) return
     if (inputType === 'text' && !uploadText.trim()) return
 
     setUploading(true)
-    setUploadResult('')
     try {
-      const ts = new Date().toISOString()
-      const form = new FormData()
-      form.append('timestamp', ts)
-      form.append('namespace', uploadNs)
-
-      let endpoint = `${RAG_URL}/upload-pdf`
-
       if (inputType === 'text') {
-        const fileName = uploadTextTitle.trim() ? `${uploadTextTitle.replace(/\s+/g, '_')}.txt` : `raw_text_${Date.now()}.txt`
+        const fileName = uploadTextTitle.trim()
+          ? `${uploadTextTitle.replace(/\s+/g, '_')}.txt`
+          : `raw_text_${Date.now()}.txt`
         const blob = new Blob([uploadText], { type: 'text/plain' })
-        form.append('file', blob, fileName)
-        endpoint = `${RAG_URL}/upload-text`
+        setUploadProgress({ done: 0, total: 1 })
+        const result = await uploadOne(blob, fileName)
+        setUploadProgress({ done: 1, total: 1 })
+        toast({ title: 'Upload Successful', description: `Uploaded ${result.chunks} chunks to ${uploadNs}` })
+        setUploadText('')
+        setUploadTextTitle('')
       } else {
-        form.append('file', uploadFile as File)
-        const fileName = uploadFile!.name.toLowerCase()
-        if (fileName.endsWith('.pdf')) {
-          endpoint = `${RAG_URL}/upload-pdf`
-        } else if (fileName.endsWith('.doc') || fileName.endsWith('.docx')) {
-          endpoint = `${RAG_URL}/upload-docx`
-        } else {
-          endpoint = `${RAG_URL}/upload-text`
+        const total = uploadFiles.length
+        setUploadProgress({ done: 0, total })
+        const failures: { name: string; msg: string }[] = []
+        let successCount = 0
+        let totalChunks = 0
+        for (let i = 0; i < uploadFiles.length; i++) {
+          const f = uploadFiles[i]
+          try {
+            const r = await uploadOne(f, f.name)
+            successCount++
+            totalChunks += r.chunks
+          } catch (err) {
+            failures.push({ name: f.name, msg: err instanceof Error ? err.message : String(err) })
+          }
+          setUploadProgress({ done: i + 1, total })
         }
-      }
-
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'X-Admin-Key': ADMIN_KEY },
-        body: form,
-      })
-      const data = await res.json()
-      
-      if (res.ok) {
-        toast({
-          title: "Upload Successful",
-          description: `Uploaded ${data.chunks_stored} chunks to ${uploadNs}`,
-        })
-        fetchDocs()
-        if (inputType === 'file') {
-          setUploadFile(null)
-        } else {
-          setUploadText('')
-          setUploadTextTitle('')
+        if (successCount > 0) {
+          toast({
+            title: failures.length ? 'Partial upload' : 'Upload Successful',
+            description: `Uploaded ${successCount}/${total} file${total === 1 ? '' : 's'} (${totalChunks} chunks) to ${uploadNs}`,
+          })
         }
-      } else {
-        toast({
-          title: "Upload Failed",
-          description: data.detail || "Something went wrong during upload",
-          variant: "destructive"
-        })
+        if (failures.length) {
+          toast({
+            title: `${failures.length} file${failures.length === 1 ? '' : 's'} failed`,
+            description: failures.map(f => `${f.name}: ${f.msg}`).join('\n'),
+            variant: 'destructive',
+          })
+        }
+        setUploadFiles([])
       }
-    } catch (e: unknown) {
+      fetchDocs()
+    } catch (e) {
       toast({
-        title: "Error",
+        title: 'Error',
         description: e instanceof Error ? e.message : 'Upload failed',
-        variant: "destructive"
+        variant: 'destructive',
       })
     } finally {
       setUploading(false)
+      setUploadProgress(null)
     }
   }
 
@@ -177,6 +195,39 @@ export default function AdminDocumentsPage() {
       type: 'file',
       data: { filename, namespace }
     })
+  }
+
+  const handleView = async (doc: DocEntry) => {
+    if (!doc.storage_path) {
+      toast({
+        title: 'No archived original',
+        description: 'This document was indexed before file archival was enabled.',
+        variant: 'destructive',
+      })
+      return
+    }
+    try {
+      const res = await fetch(
+        `${RAG_URL}/admin/document-url?storage_path=${encodeURIComponent(doc.storage_path)}`,
+        { headers: { 'X-Admin-Key': ADMIN_KEY } }
+      )
+      const data = await res.json()
+      if (res.ok && data.url) {
+        window.open(data.url, '_blank', 'noopener,noreferrer')
+      } else {
+        toast({
+          title: 'Unable to open file',
+          description: data.detail || 'Failed to generate a view link.',
+          variant: 'destructive',
+        })
+      }
+    } catch (e) {
+      toast({
+        title: 'Error',
+        description: e instanceof Error ? e.message : 'Failed to open document',
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleDeleteNamespace = async () => {
@@ -272,13 +323,19 @@ export default function AdminDocumentsPage() {
           <div className="md:col-span-2">
             {inputType === 'file' ? (
               <>
-                <label className="block text-sm font-medium text-background/60 mb-1.5">Document File (.pdf, .txt, .docx)</label>
+                <label className="block text-sm font-medium text-background/60 mb-1.5">Document Files (.pdf, .txt, .docx) — multiple allowed</label>
                 <input
                   type="file"
+                  multiple
                   accept=".pdf,.txt,.md,.csv,.doc,.docx"
-                  onChange={e => setUploadFile(e.target.files?.[0] || null)}
+                  onChange={e => setUploadFiles(Array.from(e.target.files || []))}
                   className="block w-full text-sm text-background/50 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-white/15 file:text-background hover:file:bg-white/25 transition-colors cursor-pointer"
                 />
+                {uploadFiles.length > 0 && (
+                  <p className="text-xs text-background/60 mt-2">
+                    {uploadFiles.length} file{uploadFiles.length === 1 ? '' : 's'} selected: {uploadFiles.map(f => f.name).join(', ')}
+                  </p>
+                )}
               </>
             ) : (
               <div className="space-y-4">
@@ -323,10 +380,16 @@ export default function AdminDocumentsPage() {
         <div className="mt-5 flex items-center gap-4">
           <button
             onClick={handleUpload}
-            disabled={uploading || (inputType === 'file' ? !uploadFile : !uploadText.trim())}
+            disabled={uploading || (inputType === 'file' ? uploadFiles.length === 0 : !uploadText.trim())}
             className="px-5 py-2 bg-white hover:bg-white/90 disabled:opacity-40 text-foreground rounded-lg text-sm font-semibold transition-all duration-200 shadow-sm active:scale-[0.98]"
           >
-            {uploading ? 'Uploading...' : 'Upload Document'}
+            {uploading
+              ? uploadProgress
+                ? `Uploading ${uploadProgress.done}/${uploadProgress.total}...`
+                : 'Uploading...'
+              : inputType === 'file' && uploadFiles.length > 1
+                ? `Upload ${uploadFiles.length} Documents`
+                : 'Upload Document'}
           </button>
         </div>
       </div>
@@ -376,13 +439,23 @@ export default function AdminDocumentsPage() {
                     {doc.timestamp && <span className="text-xs text-muted-foreground">{doc.timestamp.substring(0, 10)}</span>}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(doc.filename, doc.namespace)}
-                  disabled={deletingDoc === doc.filename}
-                  className="text-red-400 border border-red-400 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-sm disabled:opacity-50 transition-colors font-medium"
-                >
-                  {deletingDoc === doc.filename ? 'Deleting...' : 'Delete'}
-                </button>
+                <div className="flex items-center gap-2">
+                  {doc.storage_path && (
+                    <button
+                      onClick={() => handleView(doc)}
+                      className="text-foreground/80 border border-border/60 hover:bg-foreground hover:text-background px-2 py-1 rounded text-sm transition-colors font-medium"
+                    >
+                      View
+                    </button>
+                  )}
+                  <button
+                    onClick={() => handleDelete(doc.filename, doc.namespace)}
+                    disabled={deletingDoc === doc.filename}
+                    className="text-red-400 border border-red-400 hover:bg-red-500 hover:text-white px-2 py-1 rounded text-sm disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {deletingDoc === doc.filename ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </div>
             ))
           )}
