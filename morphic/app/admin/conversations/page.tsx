@@ -2,8 +2,6 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
-import { MemoizedReactMarkdown } from '@/components/ui/markdown'
-import remarkGfm from 'remark-gfm'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,6 +19,29 @@ const RAG_URL = process.env.NEXT_PUBLIC_RAG_SERVER_URL || 'http://localhost:8000
 const ADMIN_KEY = process.env.NEXT_PUBLIC_ADMIN_SECRET_KEY || ''
 
 const ROLES = ['admin', 'management', 'sales', 'support', 'operations', 'accounting']
+
+// Lightweight markdown → HTML for admin QA view (same approach as /admin/feedback).
+// Avoids pulling in micromark/remark-gfm on this page, which was crashing the client.
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+const renderAnswerHtml = (raw: string | null | undefined) => {
+  if (!raw) return ''
+  let t = escapeHtml(String(raw))
+  t = t
+    .replace(/^### (.*$)/gim, '<h3 class="text-md font-bold my-2">$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2 class="text-lg font-bold my-2">$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1 class="text-xl font-bold my-2">$1</h1>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    .replace(/`([^`]+)`/g, '<code class="bg-muted px-1 rounded">$1</code>')
+    .replace(/^\- (.*$)/gim, '<ul class="list-disc pl-5 my-1"><li>$1</li></ul>')
+    .replace(/^\d\. (.*$)/gim, '<ol class="list-decimal pl-5 my-1"><li>$1</li></ol>')
+    .replace(/<\/ul>\s*<ul class="list-disc pl-5 my-1">/g, '')
+    .replace(/<\/ol>\s*<ol class="list-decimal pl-5 my-1">/g, '')
+    .replace(/\n/g, '<br />')
+  return t
+}
 
 interface Turn {
   id: number
@@ -181,15 +202,10 @@ export default function AdminConversationsPage() {
                           </div>
                           <div className="bg-muted/20 px-4 py-3">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">Assistant</p>
-                            <div className="text-sm text-foreground">
-                              <MemoizedReactMarkdown
-                                // @ts-expect-error - remark plugin type mismatch
-                                remarkPlugins={[remarkGfm]}
-                                className="prose-sm prose-neutral dark:prose-invert max-w-none"
-                              >
-                                {turn.answer}
-                              </MemoizedReactMarkdown>
-                            </div>
+                            <div
+                              className="text-sm text-foreground prose-sm prose-neutral dark:prose-invert max-w-none"
+                              dangerouslySetInnerHTML={{ __html: renderAnswerHtml(turn.answer) }}
+                            />
                             {turn.sources && turn.sources.length > 0 && (
                               <div className="flex gap-2 flex-wrap mt-2">
                                 <span className="text-xs text-muted-foreground">Sources:</span>
