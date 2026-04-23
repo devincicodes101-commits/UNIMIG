@@ -1,6 +1,12 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import Link from 'next/link'
 import {
   AlertDialog,
@@ -52,6 +58,9 @@ export default function AdminDocumentsPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null)
   const [deletingDoc, setDeletingDoc] = useState<string | null>(null)
+  const [viewingDoc, setViewingDoc] = useState<DocEntry | null>(null)
+  const [docChunks, setDocChunks] = useState<string[]>([])
+  const [loadingChunks, setLoadingChunks] = useState(false)
   const { toast } = useToast()
 
   const [confirmDelete, setConfirmDelete] = useState<{
@@ -198,35 +207,39 @@ export default function AdminDocumentsPage() {
   }
 
   const handleView = async (doc: DocEntry) => {
-    if (!doc.storage_path) {
-      toast({
-        title: 'No archived original',
-        description: 'This document was indexed before file archival was enabled.',
-        variant: 'destructive',
-      })
-      return
+    // If the doc has a storage path, try to open the original file
+    if (doc.storage_path) {
+      try {
+        const res = await fetch(
+          `${RAG_URL}/admin/document-url?storage_path=${encodeURIComponent(doc.storage_path)}`,
+          { headers: { 'X-Admin-Key': ADMIN_KEY } }
+        )
+        const data = await res.json()
+        if (res.ok && data.url) {
+          window.open(data.url, '_blank', 'noopener,noreferrer')
+          return
+        }
+      } catch {
+        // fall through to modal
+      }
     }
+    // Fallback: open modal and try to fetch chunks
+    setViewingDoc(doc)
+    setDocChunks([])
+    setLoadingChunks(true)
     try {
       const res = await fetch(
-        `${RAG_URL}/admin/document-url?storage_path=${encodeURIComponent(doc.storage_path)}`,
+        `${RAG_URL}/admin/document-chunks?filename=${encodeURIComponent(doc.filename)}&namespace=${doc.namespace}`,
         { headers: { 'X-Admin-Key': ADMIN_KEY } }
       )
-      const data = await res.json()
-      if (res.ok && data.url) {
-        window.open(data.url, '_blank', 'noopener,noreferrer')
-      } else {
-        toast({
-          title: 'Unable to open file',
-          description: data.detail || 'Failed to generate a view link.',
-          variant: 'destructive',
-        })
+      if (res.ok) {
+        const data = await res.json()
+        setDocChunks(data.chunks || [])
       }
-    } catch (e) {
-      toast({
-        title: 'Error',
-        description: e instanceof Error ? e.message : 'Failed to open document',
-        variant: 'destructive',
-      })
+    } catch {
+      // show modal with metadata only
+    } finally {
+      setLoadingChunks(false)
     }
   }
 
@@ -440,14 +453,12 @@ export default function AdminDocumentsPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {doc.storage_path && (
-                    <button
-                      onClick={() => handleView(doc)}
-                      className="text-foreground/80 border border-border/60 hover:bg-foreground hover:text-background px-2 py-1 rounded text-sm transition-colors font-medium"
-                    >
-                      View
-                    </button>
-                  )}
+                  <button
+                    onClick={() => handleView(doc)}
+                    className="text-blue-500 border border-blue-500 hover:bg-blue-500 hover:text-white px-2 py-1 rounded text-sm transition-colors font-medium"
+                  >
+                    View
+                  </button>
                   <button
                     onClick={() => handleDelete(doc.filename, doc.namespace)}
                     disabled={deletingDoc === doc.filename}
@@ -461,6 +472,42 @@ export default function AdminDocumentsPage() {
           )}
         </div>
       </div>
+
+      {/* View document modal */}
+      <Dialog open={!!viewingDoc} onOpenChange={(open: boolean) => { if (!open) setViewingDoc(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="truncate">{viewingDoc?.filename}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mb-2">
+            <span className="bg-muted px-2 py-0.5 rounded-full border border-border">
+              {namespaces.find(n => n.value === viewingDoc?.namespace)?.label || viewingDoc?.namespace}
+            </span>
+            <span>{viewingDoc?.chunk_count} chunks</span>
+            {viewingDoc?.timestamp && <span>{viewingDoc.timestamp.substring(0, 10)}</span>}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {loadingChunks ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+              </div>
+            ) : docChunks.length > 0 ? (
+              <div className="space-y-3">
+                {docChunks.map((chunk: string, i: number) => (
+                  <div key={i} className="bg-muted rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground mb-1 font-medium">Chunk {i + 1}</p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">{chunk}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-muted-foreground text-sm italic">
+                Content preview unavailable — this document was indexed before file archival was enabled. Re-upload it to enable viewing.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmation Modal */}
       <AlertDialog open={confirmDelete.open} onOpenChange={(open) => setConfirmDelete(prev => ({ ...prev, open }))}>
