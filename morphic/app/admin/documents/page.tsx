@@ -12,6 +12,12 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useToast } from '@/components/ui/use-toast'
 
 const RAG_URL = process.env.NEXT_PUBLIC_RAG_SERVER_URL || 'http://localhost:8000'
@@ -63,6 +69,9 @@ export default function AdminDocumentsPage() {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isUploading, setIsUploading] = useState(false)
   const [deletingDoc, setDeletingDoc] = useState<string | null>(null)
+  const [viewingDoc, setViewingDoc] = useState<DocEntry | null>(null)
+  const [docChunks, setDocChunks] = useState<string[]>([])
+  const [loadingChunks, setLoadingChunks] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -218,6 +227,27 @@ export default function AdminDocumentsPage() {
     setIsUploading(false)
     toast({ title: 'Upload complete', description: `Processed ${pending.length} file(s) into ${ns}` })
     fetchDocs()
+  }
+
+  // ── View handler ─────────────────────────────────────────────────
+  const handleView = async (doc: DocEntry) => {
+    setViewingDoc(doc)
+    setDocChunks([])
+    setLoadingChunks(true)
+    try {
+      const res = await fetch(
+        `${RAG_URL}/admin/document-chunks?filename=${encodeURIComponent(doc.filename)}&namespace=${doc.namespace}`,
+        { headers: { 'X-Admin-Key': ADMIN_KEY } }
+      )
+      if (res.ok) {
+        const data = await res.json()
+        setDocChunks(data.chunks || [])
+      }
+    } catch {
+      // endpoint may not exist — modal still opens showing metadata
+    } finally {
+      setLoadingChunks(false)
+    }
   }
 
   // ── Delete handlers ──────────────────────────────────────────────
@@ -491,18 +521,62 @@ export default function AdminDocumentsPage() {
                     )}
                   </div>
                 </div>
-                <button
-                  onClick={() => handleDelete(doc.filename, doc.namespace)}
-                  disabled={deletingDoc === doc.filename}
-                  className="text-red-400 border border-red-400 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 transition-colors font-medium shrink-0 self-end sm:self-auto"
-                >
-                  {deletingDoc === doc.filename ? 'Deleting…' : 'Delete'}
-                </button>
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                  <button
+                    onClick={() => handleView(doc)}
+                    className="text-blue-500 border border-blue-500 hover:bg-blue-500 hover:text-white px-3 py-1.5 rounded text-sm transition-colors font-medium"
+                  >
+                    View
+                  </button>
+                  <button
+                    onClick={() => handleDelete(doc.filename, doc.namespace)}
+                    disabled={deletingDoc === doc.filename}
+                    className="text-red-400 border border-red-400 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded text-sm disabled:opacity-50 transition-colors font-medium"
+                  >
+                    {deletingDoc === doc.filename ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
               </div>
             ))
           )}
         </div>
       </div>
+
+      {/* View document dialog */}
+      <Dialog open={!!viewingDoc} onOpenChange={(open: boolean) => { if (!open) setViewingDoc(null) }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="truncate">{viewingDoc?.filename}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-wrap gap-2 text-xs text-muted-foreground mb-2">
+            <span className="bg-muted px-2 py-0.5 rounded-full border border-border">
+              {namespaces.find(n => n.value === viewingDoc?.namespace)?.label || viewingDoc?.namespace}
+            </span>
+            <span>{viewingDoc?.chunk_count} chunks</span>
+            {viewingDoc?.timestamp && <span>{viewingDoc.timestamp.substring(0, 10)}</span>}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {loadingChunks ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-8 h-8 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+              </div>
+            ) : docChunks.length > 0 ? (
+              <div className="space-y-3">
+                {docChunks.map((chunk, i) => (
+                  <div key={i} className="bg-muted rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground mb-1 font-medium">Chunk {i + 1}</p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">{chunk}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="py-8 text-center text-muted-foreground text-sm italic">
+                Content preview not available — the document is indexed in Pinecone but the raw chunks cannot be retrieved directly.
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Confirmation dialog */}
       <AlertDialog
