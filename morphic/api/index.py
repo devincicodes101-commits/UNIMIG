@@ -970,6 +970,29 @@ async def delete_by_timestamp(timestamp: str, namespace: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/admin/document-chunks", dependencies=[Depends(require_admin_key)])
+async def get_document_chunks(filename: str, namespace: str):
+    """Retrieve all stored text chunks for a specific document from Pinecone."""
+    try:
+        dummy_vector = [0.0] * 3072
+        query_response = index.query(
+            vector=dummy_vector,
+            filter={"filename": filename},
+            namespace=namespace,
+            top_k=10000,
+            include_metadata=True,
+        )
+        if not query_response.matches:
+            return {"chunks": [], "total": 0, "filename": filename, "namespace": namespace}
+
+        matches = sorted(query_response.matches, key=lambda m: m.metadata.get("chunk_index", 0))
+        chunks = [m.metadata.get("text", "") for m in matches if m.metadata.get("text")]
+
+        return {"chunks": chunks, "total": len(chunks), "filename": filename, "namespace": namespace}
+    except Exception as e:
+        logger.error(f"Error fetching document chunks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.delete("/delete-by-filename", dependencies=[Depends(require_admin_key)])
 async def delete_by_filename(filename: str, namespace: str):
     """Delete all vectors for a given filename from a namespace + the archived original."""
