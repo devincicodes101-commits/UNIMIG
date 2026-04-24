@@ -624,14 +624,24 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
         raise HTTPException(status_code=500, detail=f"Error generating embeddings: {str(e)}")
 
 # ─────────────────────────────────────────────
-# Query Expansion (HyDE — Hypothetical Document Embeddings)
-# Embeds a generated document excerpt instead of the raw question so the
-# vector is in the same semantic space as stored document chunks.
+# Query → Vector conversion (HyDE)
+#
+# Pipeline: user question → GPT generates a document-style passage → embed
+# that passage → Pinecone-ready vector.
+#
+# Embedding the hypothetical document (not the question itself) puts the
+# search vector in the same semantic space as the stored document chunks,
+# which dramatically improves recall for real-world phrasing mismatches.
 # ─────────────────────────────────────────────
-def expand_query_for_retrieval(question: str) -> str:
-    """Generate a hypothetical document passage that would answer the question,
-    then combine it with the original query for a richer embedding signal."""
+def query_to_vector(question: str) -> tuple[list, str]:
+    """Convert a user question into a Pinecone-ready embedding vector.
+
+    Returns (vector, text_that_was_embedded) so callers can log/debug both.
+    Falls back to embedding the raw question if the LLM call fails.
+    """
     try:
+        # Step 1 — Generate a hypothetical document passage in the style of the
+        #           stored chunks so the resulting vector lives in document space.
         response = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
@@ -641,8 +651,8 @@ def expand_query_for_retrieval(question: str) -> str:
                         "You are a retrieval assistant. Given a user question, write a short 2–3 sentence "
                         "passage that would appear in a company internal knowledge base document and directly "
                         "answer this question. Use declarative, document-style language — not Q&A format. "
-                        "Include relevant synonyms and related terms (e.g. namespace, role, permissions, "
-                        "access control, restriction, visibility, confidential) where appropriate."
+                        "Include relevant synonyms and related terms such as namespace, role, permissions, "
+                        "access control, restriction, visibility, and confidential where appropriate."
                     ),
                 },
                 {"role": "user", "content": question},
@@ -650,12 +660,18 @@ def expand_query_for_retrieval(question: str) -> str:
             temperature=0,
             max_tokens=150,
         )
-        hypothetical = response.choices[0].message.content.strip()
-        logger.info(f"[HyDE] expanded query → {hypothetical[:80]!r}")
-        return f"{question}\n{hypothetical}"
+        doc_passage = response.choices[0].message.content.strip()
+        logger.info(f"[query→vector] hypothetical passage: {doc_passage[:100]!r}")
+
+        # Step 2 — Convert the document-style passage to a dense vector.
+        vector = generate_embeddings([doc_passage])[0]
+        logger.info(f"[query→vector] {len(vector)}-dim vector ready for Pinecone")
+        return vector, doc_passage
+
     except Exception as e:
-        logger.warning(f"[HyDE] query expansion failed, falling back to raw query: {e}")
-        return question
+        logger.warning(f"[query→vector] HyDE failed, falling back to raw query embedding: {e}")
+        vector = generate_embeddings([question])[0]
+        return vector, question
 
 
 # ─────────────────────────────────────────────
@@ -707,31 +723,31 @@ async def query_vector_db(request: QueryRequest):
         allowed_namespaces = ROLE_NAMESPACES[role]
         logger.info(f"Query from role={role}, searching namespaces: {allowed_namespaces}")
 
-        # Expand query with HyDE so the embedding is in document space, not question space
-        expanded_query = expand_query_for_retrieval(request.query)
-        query_embedding = generate_embeddings([expanded_query])[0]
+        # Step 1: Convert query to vector (question → document passage → embedding)
+        query_vector, embedded_text = query_to_vector(request.query)
+        logger.info(f"[query] vectorised: {embedded_text[:80]!r}")
 
         # Fetch more candidates per namespace so relevant chunks aren't missed
         per_ns_top_k = min(request.top_k * 3, 20)
 
-        # Always check feedback namespace for corrections
+        # Step 2: Query Pinecone with the vector — feedback namespace first
         feedback_response = index.query(
-            vector=query_embedding,
+            vector=query_vector,
             namespace="feedback-namespace",
             top_k=3,
             include_metadata=True,
         )
         if feedback_response.matches:
             top_fb_score = feedback_response.matches[0].score
-            logger.info(f"[query] feedback-namespace hit: {len(feedback_response.matches)} matches for role={role} (top score={top_fb_score:.3f})")
+            logger.info(f"[query] feedback-namespace: {len(feedback_response.matches)} hits (top={top_fb_score:.3f})")
         else:
             logger.info(f"[query] feedback-namespace: no matches for role={role}")
 
-        # Query each allowed namespace with expanded per-namespace budget
+        # Step 3: Query each allowed namespace with the same vector
         all_matches = list(feedback_response.matches)
         for ns in allowed_namespaces:
             ns_response = index.query(
-                vector=query_embedding,
+                vector=query_vector,
                 namespace=ns,
                 top_k=per_ns_top_k,
                 include_metadata=True,
@@ -1495,19 +1511,16 @@ async def debug_retrieval(
 
         namespaces_to_search = [override_namespace] if override_namespace else ROLE_NAMESPACES[role_key]
 
-        # Step 1 — HyDE query expansion
-        expanded = expand_query_for_retrieval(query)
+        # Step 1 — Convert query to vector (question → document passage → embedding)
+        query_vector, doc_passage = query_to_vector(query)
 
-        # Step 2 — Embed
-        embedding = generate_embeddings([expanded])[0]
-
-        # Step 3 — Query each namespace
+        # Step 2 — Query each namespace with the vector
         results_by_namespace: dict = {}
         all_matches = []
 
         for ns in namespaces_to_search:
             ns_resp = index.query(
-                vector=embedding,
+                vector=query_vector,
                 namespace=ns,
                 top_k=15,
                 include_metadata=True,
@@ -1524,9 +1537,9 @@ async def debug_retrieval(
             ]
             all_matches.extend(ns_resp.matches)
 
-        # Step 4 — Feedback namespace
+        # Step 3 — Feedback namespace
         fb_resp = index.query(
-            vector=embedding,
+            vector=query_vector,
             namespace="feedback-namespace",
             top_k=3,
             include_metadata=True,
@@ -1548,7 +1561,7 @@ async def debug_retrieval(
 
         return {
             "original_query": query,
-            "expanded_query": expanded,
+            "expanded_query": doc_passage,
             "role": role_key,
             "namespaces_searched": namespaces_to_search,
             "results_by_namespace": results_by_namespace,
