@@ -129,6 +129,7 @@ Behavior:
 - If asked for explanation: give a short, clear answer.
 - If asked what went wrong: list only causes mentioned in the documents.
 - Do NOT list multiple options unless asked.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Keep answers short, clear, and direct.
@@ -160,6 +161,7 @@ Behavior:
 - If asked for best or fastest way: give only the most efficient workflow.
 - Do NOT list all methods unless asked.
 - Focus only on the most relevant approach.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Be concise and direct.
@@ -192,6 +194,7 @@ Behavior:
 - If asked for steps: provide the documented sequence only.
 - If asked for explanation: keep it short and direct.
 - If asked what went wrong: list only causes mentioned in the documents.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Be precise and structured.
@@ -221,6 +224,7 @@ Strict Rules:
 Behavior:
 - If asked what went wrong: give only documented causes.
 - If asked for process: give only required steps.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Be clear and concise.
@@ -252,6 +256,7 @@ Behavior:
 - If asked for steps: give step-by-step instructions.
 - If asked what went wrong: list only causes mentioned in the documents.
 - Do NOT list multiple options unless asked.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Keep answers short, clear, and direct.
@@ -287,6 +292,7 @@ Behavior:
 - If asked for steps: give step-by-step instructions.
 - If asked what went wrong: list only causes mentioned in the documents.
 - Do NOT list multiple options unless asked.
+- If the question implies a quick or efficient solution, respond in a concise explanation format instead of step-by-step instructions.
 
 Style:
 - Keep answers clear, direct, and concise.
