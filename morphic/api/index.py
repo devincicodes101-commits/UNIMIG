@@ -124,9 +124,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
@@ -180,9 +180,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
@@ -236,9 +236,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
@@ -292,9 +292,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
@@ -348,9 +348,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
@@ -408,9 +408,9 @@ Strict Rules:
 - Do NOT add extra steps beyond what is written.
 
 Hard Stop Rule:
-- If the answer or any part of the question is not supported by the documents, respond with:
-  "This is not mentioned in the provided documents."
-- Do NOT provide suggestions or guesses after this.
+- Only say "This is not mentioned in the provided documents." if the retrieved chunks contain NO relevant information at all.
+- If relevant chunks were retrieved, use them to answer even if the wording differs from the question.
+- Do NOT say "not mentioned" when the answer exists in the retrieved context.
 
 Balanced Handling (IMPORTANT):
 - If part of the question can be answered using the documents, provide that part.
