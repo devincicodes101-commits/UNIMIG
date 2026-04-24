@@ -82,7 +82,7 @@ export default function AdminDebugPage() {
       <div>
         <Link href="/admin" className="text-sm text-muted-foreground hover:text-foreground transition-colors">← Admin Dashboard</Link>
         <h1 className="text-3xl font-bold mt-2 mb-1 text-foreground">Retrieval Debugger</h1>
-        <p className="text-muted-foreground text-sm">Diagnose why a question returns "not mentioned" — trace the full pipeline from query → Pinecone → chunks.</p>
+        <p className="text-muted-foreground text-sm">Diagnose why a question returns &quot;not mentioned&quot; — trace the full pipeline from query → Pinecone → chunks.</p>
       </div>
 
       {/* ── Section 1: Retrieval trace ── */}
