@@ -40,7 +40,7 @@ export function MessageActions({
 
   return (
     <>
-      <div className={cn('flex items-center gap-1.5 mt-1 ml-1', className)}>
+      <div className={cn('flex flex-wrap items-center gap-1.5 mt-1 ml-1', className)}>
         <button
           onClick={handleCopy}
           className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium text-muted-foreground border border-border/50 hover:border-border hover:text-foreground hover:bg-muted/60 transition-all duration-150"

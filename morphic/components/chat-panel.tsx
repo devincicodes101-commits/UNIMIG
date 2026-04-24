@@ -188,17 +188,17 @@ export function ChatPanel({
       className={cn(
         'mx-auto w-full',
         messages.length > 0
-          ? 'fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border/60 shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.06)]'
+          ? 'fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-border/60 shadow-[0_-4px_24px_-4px_rgba(0,0,0,0.06)] pb-[env(safe-area-inset-bottom)]'
           : 'fixed bottom-8 left-0 right-0 top-14 flex flex-col items-center justify-center hero-glow'
       )}
     >
       {messages.length === 0 && (
         <div className="mb-10 flex flex-col items-center gap-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <div className="text-center space-y-6">
-            <h1 className="text-5xl md:text-6xl font-black uppercase tracking-tighter text-foreground animate-in fade-in duration-700">
+            <h1 className="text-3xl sm:text-5xl md:text-6xl font-black uppercase tracking-tighter text-foreground animate-in fade-in duration-700">
               Hi I am UNIMIG!
             </h1>
-            <p className="text-lg text-muted-foreground leading-relaxed max-w-lg font-medium">
+            <p className="text-base sm:text-lg text-muted-foreground leading-relaxed max-w-lg font-medium">
               Welcome to the UNIMIG Intelligent Assistant.
               <br />
               <span className="text-foreground/80">I am here to assist you, feel free to ask anything!</span>

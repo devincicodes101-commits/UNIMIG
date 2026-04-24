@@ -75,7 +75,7 @@ export function Chat({
   }
 
   return (
-    <div className="flex flex-col w-full max-w-3xl pt-4 pb-32 mx-auto stretch">
+    <div className="flex flex-col w-full max-w-3xl pt-4 pb-36 mx-auto stretch px-3 sm:px-4 md:px-0">
       {isNavigating && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="w-10 h-10 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
