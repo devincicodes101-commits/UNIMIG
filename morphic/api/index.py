@@ -1151,11 +1151,23 @@ async def upload_pdf(
                 "metadata": metadata,
             })
 
-        # Upsert in batches of 100
+        # Upsert in batches of 100 — log result explicitly so silent failures surface
+        total_batches = (len(vectors) - 1) // 100 + 1
         for b in range(0, len(vectors), 100):
             batch = vectors[b : b + 100]
-            index.upsert(vectors=batch, namespace=namespace)
-            logger.info(f"Uploaded batch {b // 100 + 1}/{(len(vectors)-1)//100 + 1}")
+            try:
+                upsert_result = index.upsert(vectors=batch, namespace=namespace)
+                logger.info(
+                    f"[upload-pdf] batch {b // 100 + 1}/{total_batches} upserted "
+                    f"{getattr(upsert_result, 'upserted_count', len(batch))} vectors "
+                    f"→ namespace={namespace}"
+                )
+            except Exception as upsert_err:
+                logger.error(
+                    f"[upload-pdf] FAILED batch {b // 100 + 1}/{total_batches} "
+                    f"namespace={namespace}: {upsert_err}"
+                )
+                raise HTTPException(status_code=500, detail=f"Pinecone upsert failed: {upsert_err}")
 
         return {
             "message": "PDF processed and stored",
@@ -1413,6 +1425,154 @@ async def delete_namespace(namespace: str):
     except Exception as e:
         logger.error(f"Error deleting namespace {namespace}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ─────────────────────────────────────────────
+# ADMIN DEBUG — Verify what is indexed in Pinecone
+# ─────────────────────────────────────────────
+@app.get("/admin/verify-index", dependencies=[Depends(require_admin_key)])
+async def verify_index(namespace: Optional[str] = None, filename: Optional[str] = None):
+    """Show every document indexed in Pinecone per namespace, with chunk counts and sample text."""
+    try:
+        stats = index.describe_index_stats()
+        namespace_stats = stats.get("namespaces", {})
+        target_namespaces = [namespace] if namespace else list(namespace_stats.keys())
+
+        dummy_vector = [0.0] * 3072
+        results = {}
+        for ns in target_namespaces:
+            query_kwargs: dict = {
+                "vector": dummy_vector,
+                "namespace": ns,
+                "top_k": 200,
+                "include_metadata": True,
+            }
+            if filename:
+                query_kwargs["filter"] = {"filename": filename}
+            response = index.query(**query_kwargs)
+
+            docs: dict = {}
+            for m in response.matches:
+                fname = m.metadata.get("filename", "unknown")
+                if fname not in docs:
+                    docs[fname] = {
+                        "filename": fname,
+                        "chunks_found": 0,
+                        "total_chunks_meta": m.metadata.get("total_chunks"),
+                        "timestamp": m.metadata.get("timestamp"),
+                        "sample_text": (m.metadata.get("text") or "")[:300],
+                    }
+                docs[fname]["chunks_found"] += 1
+
+            results[ns] = {
+                "vector_count_pinecone": namespace_stats.get(ns, {}).get("vector_count", "N/A"),
+                "documents": list(docs.values()),
+            }
+
+        return {
+            "index_name": PINECONE_INDEX_NAME,
+            "total_vectors": stats.get("total_vector_count", 0),
+            "namespaces": results,
+        }
+    except Exception as e:
+        logger.error(f"[verify-index] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─────────────────────────────────────────────
+# ADMIN DEBUG — Full retrieval pipeline trace
+# ─────────────────────────────────────────────
+@app.get("/admin/debug-retrieval", dependencies=[Depends(require_admin_key)])
+async def debug_retrieval(
+    query: str,
+    role: str = "admin",
+    override_namespace: Optional[str] = None,
+):
+    """Run the full retrieval pipeline and return every intermediate step for debugging."""
+    try:
+        role_key = role.lower()
+        if role_key not in ROLE_NAMESPACES:
+            raise HTTPException(status_code=400, detail=f"Unknown role: {role_key}")
+
+        namespaces_to_search = [override_namespace] if override_namespace else ROLE_NAMESPACES[role_key]
+
+        # Step 1 — HyDE query expansion
+        expanded = expand_query_for_retrieval(query)
+
+        # Step 2 — Embed
+        embedding = generate_embeddings([expanded])[0]
+
+        # Step 3 — Query each namespace
+        results_by_namespace: dict = {}
+        all_matches = []
+
+        for ns in namespaces_to_search:
+            ns_resp = index.query(
+                vector=embedding,
+                namespace=ns,
+                top_k=15,
+                include_metadata=True,
+            )
+            results_by_namespace[ns] = [
+                {
+                    "id": m.id,
+                    "score": round(m.score, 4),
+                    "filename": m.metadata.get("filename"),
+                    "chunk_index": m.metadata.get("chunk_index"),
+                    "text_preview": (m.metadata.get("text") or "")[:400],
+                }
+                for m in ns_resp.matches
+            ]
+            all_matches.extend(ns_resp.matches)
+
+        # Step 4 — Feedback namespace
+        fb_resp = index.query(
+            vector=embedding,
+            namespace="feedback-namespace",
+            top_k=3,
+            include_metadata=True,
+        )
+        results_by_namespace["feedback-namespace"] = [
+            {
+                "id": m.id,
+                "score": round(m.score, 4),
+                "text_preview": (m.metadata.get("text") or "")[:400],
+            }
+            for m in fb_resp.matches
+        ]
+
+        # Step 5 — Global ranking + threshold
+        all_matches.sort(key=lambda x: x.score, reverse=True)
+        SCORE_THRESHOLD = 0.20
+        strong = [m for m in all_matches if m.score >= SCORE_THRESHOLD]
+        top_10 = (strong if len(strong) >= 2 else all_matches)[:10]
+
+        return {
+            "original_query": query,
+            "expanded_query": expanded,
+            "role": role_key,
+            "namespaces_searched": namespaces_to_search,
+            "results_by_namespace": results_by_namespace,
+            "top_10_global": [
+                {
+                    "id": m.id,
+                    "score": round(m.score, 4),
+                    "filename": m.metadata.get("filename"),
+                    "chunk_index": m.metadata.get("chunk_index"),
+                    "namespace": m.metadata.get("namespace"),
+                    "text": (m.metadata.get("text") or "")[:500],
+                }
+                for m in top_10
+            ],
+            "total_candidates": len(all_matches),
+            "above_threshold": len(strong),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[debug-retrieval] {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 def generate_improved_response(question: str, ai_response: str, correct_response: str) -> str:
     system_prompt = """
     You are a helpful assistant that improves responses based on user feedback.

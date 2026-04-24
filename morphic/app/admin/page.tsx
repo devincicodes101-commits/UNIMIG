@@ -34,6 +34,12 @@ const cards = [
     href: "/admin/feedback",
     label: "Manage Feedback",
   },
+  {
+    title: "Retrieval Debugger",
+    description: "Trace the full Pinecone retrieval pipeline and verify what documents are indexed.",
+    href: "/admin/debug",
+    label: "Debug Retrieval",
+  },
 ];
 
 export default async function AdminDashboardPage() {
