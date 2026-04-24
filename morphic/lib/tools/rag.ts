@@ -35,7 +35,7 @@ async function queryRAGServer(query: string, role: string): Promise<RAGResponse>
     body: JSON.stringify({
       query,
       role: safeRole,
-      top_k: 5
+      top_k: 10
     })
   })
 

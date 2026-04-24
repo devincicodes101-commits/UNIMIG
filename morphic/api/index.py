@@ -514,8 +514,8 @@ def delete_archived_file(storage_path: Optional[str]) -> None:
 # Text Splitter
 # ─────────────────────────────────────────────
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=1000,
-    chunk_overlap=200,
+    chunk_size=600,
+    chunk_overlap=150,
     length_function=len,
     separators=["\n\n", "\n", ". ", " ", ""],
 )
@@ -624,6 +624,41 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
         raise HTTPException(status_code=500, detail=f"Error generating embeddings: {str(e)}")
 
 # ─────────────────────────────────────────────
+# Query Expansion (HyDE — Hypothetical Document Embeddings)
+# Embeds a generated document excerpt instead of the raw question so the
+# vector is in the same semantic space as stored document chunks.
+# ─────────────────────────────────────────────
+def expand_query_for_retrieval(question: str) -> str:
+    """Generate a hypothetical document passage that would answer the question,
+    then combine it with the original query for a richer embedding signal."""
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a retrieval assistant. Given a user question, write a short 2–3 sentence "
+                        "passage that would appear in a company internal knowledge base document and directly "
+                        "answer this question. Use declarative, document-style language — not Q&A format. "
+                        "Include relevant synonyms and related terms (e.g. namespace, role, permissions, "
+                        "access control, restriction, visibility, confidential) where appropriate."
+                    ),
+                },
+                {"role": "user", "content": question},
+            ],
+            temperature=0,
+            max_tokens=150,
+        )
+        hypothetical = response.choices[0].message.content.strip()
+        logger.info(f"[HyDE] expanded query → {hypothetical[:80]!r}")
+        return f"{question}\n{hypothetical}"
+    except Exception as e:
+        logger.warning(f"[HyDE] query expansion failed, falling back to raw query: {e}")
+        return question
+
+
+# ─────────────────────────────────────────────
 # Pydantic Models
 # ─────────────────────────────────────────────
 class QueryRequest(BaseModel):
@@ -672,13 +707,18 @@ async def query_vector_db(request: QueryRequest):
         allowed_namespaces = ROLE_NAMESPACES[role]
         logger.info(f"Query from role={role}, searching namespaces: {allowed_namespaces}")
 
-        query_embedding = generate_embeddings([request.query])[0]
+        # Expand query with HyDE so the embedding is in document space, not question space
+        expanded_query = expand_query_for_retrieval(request.query)
+        query_embedding = generate_embeddings([expanded_query])[0]
+
+        # Fetch more candidates per namespace so relevant chunks aren't missed
+        per_ns_top_k = min(request.top_k * 3, 20)
 
         # Always check feedback namespace for corrections
         feedback_response = index.query(
             vector=query_embedding,
             namespace="feedback-namespace",
-            top_k=2,
+            top_k=3,
             include_metadata=True,
         )
         if feedback_response.matches:
@@ -687,21 +727,27 @@ async def query_vector_db(request: QueryRequest):
         else:
             logger.info(f"[query] feedback-namespace: no matches for role={role}")
 
-        # Query each allowed namespace
+        # Query each allowed namespace with expanded per-namespace budget
         all_matches = list(feedback_response.matches)
         for ns in allowed_namespaces:
             ns_response = index.query(
                 vector=query_embedding,
                 namespace=ns,
-                top_k=request.top_k,
+                top_k=per_ns_top_k,
                 include_metadata=True,
             )
             logger.debug(f"Namespace {ns}: {len(ns_response.matches)} matches")
             all_matches.extend(ns_response.matches)
 
-        # Sort combined results by score and take top_k
+        # Sort combined results by score
         all_matches.sort(key=lambda x: x.score, reverse=True)
-        top_matches = all_matches[:request.top_k]
+
+        # Apply score threshold — prefer high-confidence chunks; fall back to top-k if nothing passes
+        SCORE_THRESHOLD = 0.20
+        strong_matches = [m for m in all_matches if m.score >= SCORE_THRESHOLD]
+        candidate_pool = strong_matches if len(strong_matches) >= 2 else all_matches
+        top_matches = candidate_pool[:request.top_k]
+        logger.info(f"[query] {len(all_matches)} raw → {len(strong_matches)} above threshold → {len(top_matches)} returned")
 
         results = []
         source_docs = []
@@ -1071,8 +1117,9 @@ async def upload_pdf(
             for page_num, page in enumerate(doc):
                 page_text = page.get_text("text")
                 if page_text:
-                    page_text = " ".join(page_text.split())
-                    text += page_text + " "
+                    # Preserve paragraph breaks — only normalize whitespace within each line
+                    lines = [" ".join(line.split()) for line in page_text.split("\n")]
+                    text += "\n".join(lines) + "\n"
 
         if not text.strip():
             raise HTTPException(status_code=400, detail="No text could be extracted from the PDF")
