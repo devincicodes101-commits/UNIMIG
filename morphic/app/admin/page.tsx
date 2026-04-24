@@ -1,7 +1,7 @@
 import { getAuthSession, isAdmin } from "@/lib/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowUpRight } from "lucide-react";
+import { ArrowUpRight, ArrowLeft } from "lucide-react";
 
 const cards = [
   {
@@ -53,6 +53,13 @@ export default async function AdminDashboardPage() {
   return (
     <div className="max-w-7xl mx-auto pt-4 pb-10 px-6">
       <div className="mb-6">
+        <Link
+          href="/"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors duration-200 mb-4"
+        >
+          <ArrowLeft size={15} strokeWidth={2.5} />
+          Back to Chat
+        </Link>
         <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-1">Control Center</p>
         <h1 className="text-3xl font-bold text-foreground">Admin Dashboard</h1>
         <p className="mt-1.5 text-muted-foreground text-sm leading-relaxed">
