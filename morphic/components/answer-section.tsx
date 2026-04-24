@@ -28,26 +28,41 @@ export function AnswerSection({
   const enableShare = process.env.NEXT_PUBLIC_ENABLE_SHARE === 'true'
 
   const message = content ? (
-    <div className={cn("flex flex-col gap-1", isCorrected && "relative")}>
-      {isCorrected && (
-        <div className="absolute -left-8 top-0 flex items-center text-green-500 text-xs" title="This response has been corrected">
-          Corrected
-        </div>
-      )}
-      <div className={cn(isCorrected && "border-l-2 border-green-500 pl-2")}>
-        <BotMessage message={content} />
+    <div className="flex gap-3 mb-1">
+      {/* AI avatar */}
+      <div className="shrink-0 w-7 h-7 rounded-full bg-foreground/10 border border-border/40 flex items-center justify-center mt-1">
+        <span className="text-[10px] font-bold text-foreground/70 tracking-tight">AI</span>
       </div>
-      {showActions && (
-        <MessageActions
-          message={content}
-          chatId={chatId}
-          enableShare={enableShare}
-          question={question}
-        />
-      )}
+
+      <div className={cn("flex-1 flex flex-col gap-1", isCorrected && "relative")}>
+        {isCorrected && (
+          <span className="text-xs text-green-500 font-medium">✓ Corrected response</span>
+        )}
+        <div className={cn(
+          "bg-muted/50 border border-border/30 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm",
+          isCorrected && "border-l-2 border-l-green-500"
+        )}>
+          <BotMessage message={content} />
+        </div>
+        {showActions && (
+          <MessageActions
+            message={content}
+            chatId={chatId}
+            enableShare={enableShare}
+            question={question}
+          />
+        )}
+      </div>
     </div>
   ) : (
-    <DefaultSkeleton />
+    <div className="flex gap-3 mb-1">
+      <div className="shrink-0 w-7 h-7 rounded-full bg-foreground/10 border border-border/40 flex items-center justify-center mt-1">
+        <span className="text-[10px] font-bold text-foreground/70 tracking-tight">AI</span>
+      </div>
+      <div className="flex-1">
+        <DefaultSkeleton />
+      </div>
+    </div>
   )
   return (
     <CollapsibleMessage

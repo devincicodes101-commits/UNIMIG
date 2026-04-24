@@ -1,14 +1,15 @@
-import React from 'react'
-import { CollapsibleMessage } from './collapsible-message'
+'use client'
 
 type UserMessageProps = {
   message: string
 }
 
-export const UserMessage: React.FC<UserMessageProps> = ({ message }) => {
+export const UserMessage = ({ message }: UserMessageProps) => {
   return (
-    <CollapsibleMessage role="user">
-      <div className="flex-1 break-words w-full">{message}</div>
-    </CollapsibleMessage>
+    <div className="flex justify-end mb-1">
+      <div className="max-w-[78%] bg-foreground text-background rounded-2xl rounded-tr-sm px-4 py-3 text-sm leading-relaxed break-words shadow-sm">
+        {message}
+      </div>
+    </div>
   )
 }
