@@ -764,10 +764,11 @@ async def query_vector_db(request: QueryRequest):
         # Sort combined results by score
         all_matches.sort(key=lambda x: x.score, reverse=True)
 
-        # Apply score threshold — only return high-confidence chunks. If nothing passes,
+        # Apply score threshold — only return confident chunks. If nothing passes,
         # return EMPTY rather than weak off-topic matches. This is the role-boundary
         # enforcement: an operations user asking about sales gets no chunks back.
-        SCORE_THRESHOLD = 0.30
+        # 0.22 is calibrated to surface real matches while filtering off-topic noise.
+        SCORE_THRESHOLD = 0.22
         strong_matches = [m for m in all_matches if m.score >= SCORE_THRESHOLD]
         top_matches = strong_matches[:request.top_k]
         logger.info(f"[query] {len(all_matches)} raw → {len(strong_matches)} above {SCORE_THRESHOLD} threshold → {len(top_matches)} returned to role={role}")
