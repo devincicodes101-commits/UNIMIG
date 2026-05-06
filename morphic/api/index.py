@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import PyPDF2
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 from openai import OpenAI
 import os
@@ -715,15 +716,23 @@ async def query_vector_db(request: QueryRequest):
         else:
             logger.info(f"[query] feedback-namespace: no matches for role={role}")
 
-        # Step 3: Query each allowed namespace with the same vector
-        all_matches = list(feedback_response.matches)
-        for ns in allowed_namespaces:
-            ns_response = index.query(
+        # Step 3: Query each allowed namespace IN PARALLEL with the same vector.
+        # For admin/management with 5 namespaces this turns ~5s of sequential
+        # work into ~1s of concurrent work, keeping us safely under Vercel's
+        # 30s function timeout.
+        def _query_one_namespace(ns: str):
+            return ns, index.query(
                 vector=query_vector,
                 namespace=ns,
                 top_k=per_ns_top_k,
                 include_metadata=True,
             )
+
+        ns_results = await asyncio.gather(
+            *[asyncio.to_thread(_query_one_namespace, ns) for ns in allowed_namespaces]
+        )
+        all_matches = list(feedback_response.matches)
+        for ns, ns_response in ns_results:
             logger.debug(f"Namespace {ns}: {len(ns_response.matches)} matches")
             all_matches.extend(ns_response.matches)
 
