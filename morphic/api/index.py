@@ -83,9 +83,13 @@ VALID_NAMESPACES = [
 ]
 
 ROLE_NAMESPACES: Dict[str, List[str]] = {
-    "sales": ["sales-namespace", "general-namespace"],
-    "support": ["support-namespace", "general-namespace"],
-    "operations": ["operations-namespace", "general-namespace"],
+    # Strict role isolation: each non-admin/management role can ONLY see
+    # documents uploaded to its own namespace. The general-namespace is
+    # admin/management only — uploading there shares the doc only across
+    # those two roles, NOT across all departments.
+    "sales": ["sales-namespace"],
+    "support": ["support-namespace"],
+    "operations": ["operations-namespace"],
     "accounting": ["accounting-namespace"],
     "management": [
         "sales-namespace",
@@ -101,8 +105,8 @@ ROLE_NAMESPACES: Dict[str, List[str]] = {
         "accounting-namespace",
         "general-namespace",
     ],
-    # Fallback for users who haven't been assigned a role yet
-    "unassigned": ["general-namespace"],
+    # Unassigned users are blocked at the API gate — empty list anyway
+    "unassigned": [],
 }
 
 DEFAULT_SYSTEM_PROMPTS: Dict[str, str] = {
