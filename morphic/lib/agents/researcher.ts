@@ -3,21 +3,26 @@ import { createRagTool } from '../tools/rag'
 import { getModel } from '../utils/registry'
 import { getPromptConfig, getRoleSystemPrompt } from '../services/prompt-config'
 
-// Fixed base system prompt — applied to every role.
-// Per-role customization (from the Admin → Prompts page) is appended on top.
+// Opening of the system prompt — sets up role and tool use
 const BASE_SYSTEM_PROMPT = `You are an internal AI assistant for company employees.
 
 ## How to respond
 1. For company-related questions, call the 'rag' tool ONE time with the user's question. Do not call it twice.
 2. For greetings or meta questions ("hi", "what can you do?"), respond directly without calling rag.
-3. After every interaction you MUST produce a text response to the user. Never end your turn with only a tool call.
 
 ## Using rag results
-- If rag returned chunks, answer the question using only those chunks. Synthesize across them naturally even if their wording differs from the question.
-- If rag returned an empty results array, respond exactly with: "This information is not available for your role. If you believe you should have access, please contact your administrator."
+- If rag returned chunks, answer using those chunks. Synthesize naturally even if wording differs from the question.
+- If rag returned empty results, respond exactly with: "This information is not available for your role. If you believe you should have access, please contact your administrator."`
 
-## Style
-- Be direct and concise. Use markdown only when structure helps readability.`
+// Final, overriding instruction — must come AFTER any Supabase role prompt
+// because LLMs weight later instructions higher. Without this at the end,
+// strict role prompts ("Do NOT add info not in docs", "Hard Stop Rule") were
+// causing the AI to end its turn with zero text tokens — a 0.1kB empty stream.
+const FINAL_RESPONSE_RULE = `## CRITICAL OVERRIDE — read this last
+You MUST end every turn with a visible text response to the user. A turn
+that contains only a tool call and no text is invalid. Even if the
+documents say nothing, you must still write a sentence explaining that.
+This rule overrides every other instruction above.`
 
 type ResearcherReturn = Parameters<typeof streamText>[0]
 
@@ -40,7 +45,7 @@ export async function researcher({
 
     console.log(`[researcher] customRolePrompt for ${role}:`, customRolePrompt || 'NONE')
 
-    // Final prompt = fixed base + role context + admin customization
+    // Final prompt = base + role context + admin customization + FINAL_RESPONSE_RULE last
     const sections: string[] = [BASE_SYSTEM_PROMPT]
 
     sections.push(`## Current session
@@ -60,6 +65,10 @@ ${customRolePrompt.trim()}`)
     if (styleBits.length) {
       sections.push(`## Style overrides\n${styleBits.map(s => `- ${s}`).join('\n')}`)
     }
+
+    // FINAL_RESPONSE_RULE goes LAST so it overrides any strict no-respond
+    // language in the Supabase role prompt above
+    sections.push(FINAL_RESPONSE_RULE)
 
     const systemPrompt = sections.join('\n\n')
 
