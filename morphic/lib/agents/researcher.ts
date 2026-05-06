@@ -58,28 +58,38 @@ Strict grounding rules (apply to every case):
 - Answer ONLY with facts explicitly in the chunks. Do not invent benefits, justifications, or rationales that aren't written there.
 
 CRITICAL anti-hedging rules (apply to CASE 1):
-- Once you've given the answer from a chunk, STOP. Do not add a hedge sentence.
-- If the user asks "Why X?" and a chunk states ONE reason, that reason fully answers "Why?". Don't claim the docs don't explain it — they just did.
-- If the user asks "What is the advantage of X?" and a chunk states ONE benefit, that benefit IS the advantage. Don't claim the docs don't specify advantages — they just did.
-- The user asked a single question. One answer from the chunk is enough.
 
-The following patterns are FORBIDDEN in a CASE 1 response:
-- "However, they do not specify the advantages/benefits/reasons..."
-- "However, they do not explain the specific reasons..."
-- "but the documents do not specify..."
-- "they do not specify the [advantages/benefits/specific reasons] ... compared to other methods"
-- Any "however"/"but" sentence that follows a complete answer
+Length limit: ONE sentence. Just the fact from the chunk, nothing else.
+After that one sentence, STOP. Do not add a second sentence. Do not add commentary, implications, "this makes it easier", "without having to", or any meta-commentary about the documents.
 
-Concrete examples — match these patterns:
-- Q: "Why are export templates used?" + chunk says "Templates ensure the correct fields are included in your export file."
-  ✅ CORRECT: "Export templates are used to ensure the correct fields are included in your export file."
-  ❌ WRONG: "Templates ensure correct fields are included. However, they do not explain the specific reasons behind using export templates."
+The following ARE ALL FORBIDDEN as a second/closing sentence in a CASE 1 response — every variant:
+- "However, they do not specify..."
+- "However, they do not explain..."
+- "The documents do not explain further details..."
+- "The documents do not provide additional rationale..."
+- "The documents do not specify the advantages compared to other methods..."
+- "but the documents do not..."
+- "This makes it easier to..."
+- "This streamlines..."
+- "This saves time..."
+- "Without having to sift through..."
+- ANY sentence about benefits, ease, speed, comparison, or further explanation that isn't word-for-word in the chunk
 
-- Q: "What is the advantage of the Paste SKUs option?" + chunk says "If you have a list of product SKUs, paste them. Only those items will appear in the list."
-  ✅ CORRECT: "The advantage of Paste SKUs is that it limits the displayed list to only the items matching the SKUs you have pasted."
-  ❌ WRONG: "Paste SKUs filters the list. However, they do not specify the advantages compared to other methods."
+The user asked one question. The chunk gives the answer. Output the answer in one sentence. Do not editorialize.
 
-CASE 3 exists ONLY for genuine gaps (e.g. a chunk states a fact but no reason, and the user asked for the reason). It is NOT for hedging on a complete CASE 1 answer.
+Concrete patterns:
+
+- Q: "Why are export templates used?" + chunk: "Templates ensure the correct fields are included in your export file."
+  ✅ "Export templates are used to ensure the correct fields are included in your export file."
+  ❌ "Export templates are used to ensure the correct fields are included. The documents do not explain further details about the rationale."
+  ❌ "Templates ensure correct fields. However, they do not explain the specific reasons."
+
+- Q: "What is the advantage of the Paste SKUs option?" + chunk: "Paste them in. Only those items will appear in the list."
+  ✅ "The advantage of Paste SKUs is that only the items matching the SKUs you have pasted appear in the list."
+  ❌ "Paste SKUs filters the list. This makes it easier to export specific products without having to sift through the entire list."
+  ❌ "Paste SKUs filters the list. However, they do not specify the advantages compared to other methods."
+
+CASE 3 exists ONLY when a chunk references the subject but genuinely lacks the angle asked. It is NOT for hedging after a CASE 1 answer.
 
 For greetings or meta questions ("hi", "what can you do?"), reply briefly and directly.
 
@@ -169,8 +179,11 @@ When you have a chunk that directly answers the user's question, give that answe
       model: getModel(model),
       system: systemPrompt,
       messages,
-      // No tools — the AI just writes a text reply based on the system prompt
-      temperature: 0.5,
+      // No tools — the AI just writes a text reply based on the system prompt.
+      // temperature: 0.2 (lowered from 0.5) — strict grounding wants
+      // deterministic rule-following over creativity. Higher temps make the
+      // model invent helpful-sounding extrapolations and hedges.
+      temperature: 0.2,
       experimental_transform: smoothStream()
     }
   } catch (error) {
