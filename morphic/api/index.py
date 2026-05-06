@@ -624,54 +624,20 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
         raise HTTPException(status_code=500, detail=f"Error generating embeddings: {str(e)}")
 
 # ─────────────────────────────────────────────
-# Query → Vector conversion (HyDE)
+# Query → Vector conversion
 #
-# Pipeline: user question → GPT generates a document-style passage → embed
-# that passage → Pinecone-ready vector.
-#
-# Embedding the hypothetical document (not the question itself) puts the
-# search vector in the same semantic space as the stored document chunks,
-# which dramatically improves recall for real-world phrasing mismatches.
+# Direct embedding of the raw question. The previous HyDE expansion added a
+# gpt-4o-mini round-trip that pushed total latency past Vercel's 30s function
+# timeout when combined with multiple per-namespace Pinecone queries. The
+# resulting tool-call hang left the chat stuck and the user saw no response.
+# Direct embedding is fast, deterministic, and works well in practice when the
+# stored chunks carry good keyword density.
 # ─────────────────────────────────────────────
 def query_to_vector(question: str) -> tuple[list, str]:
-    """Convert a user question into a Pinecone-ready embedding vector.
-
-    Returns (vector, text_that_was_embedded) so callers can log/debug both.
-    Falls back to embedding the raw question if the LLM call fails.
-    """
-    try:
-        # Step 1 — Generate a hypothetical document passage in the style of the
-        #           stored chunks so the resulting vector lives in document space.
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a retrieval assistant. Given a user question, write a short 2–3 sentence "
-                        "passage that would appear in a company internal knowledge base document and directly "
-                        "answer this question. Use declarative, document-style language — not Q&A format. "
-                        "Include relevant synonyms and related terms such as namespace, role, permissions, "
-                        "access control, restriction, visibility, and confidential where appropriate."
-                    ),
-                },
-                {"role": "user", "content": question},
-            ],
-            temperature=0,
-            max_tokens=150,
-        )
-        doc_passage = response.choices[0].message.content.strip()
-        logger.info(f"[query→vector] hypothetical passage: {doc_passage[:100]!r}")
-
-        # Step 2 — Convert the document-style passage to a dense vector.
-        vector = generate_embeddings([doc_passage])[0]
-        logger.info(f"[query→vector] {len(vector)}-dim vector ready for Pinecone")
-        return vector, doc_passage
-
-    except Exception as e:
-        logger.warning(f"[query→vector] HyDE failed, falling back to raw query embedding: {e}")
-        vector = generate_embeddings([question])[0]
-        return vector, question
+    """Embed the user question directly into a Pinecone-ready vector."""
+    vector = generate_embeddings([question])[0]
+    logger.info(f"[query→vector] {len(vector)}-dim vector for: {question[:80]!r}")
+    return vector, question
 
 
 # ─────────────────────────────────────────────

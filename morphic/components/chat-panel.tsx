@@ -128,6 +128,11 @@ export function ChatPanel({
   }
 
   const isToolInvocationInProgress = () => {
+    // Only treat a tool call as "in progress" while the request is actually
+    // streaming. If the previous request died (Vercel timeout) and left a
+    // stuck tool-invocation in the saved messages, the input would otherwise
+    // be permanently disabled and the user could not submit anything new.
+    if (!isLoading) return false
     if (!messages.length) return false
 
     const lastMessage = messages[messages.length - 1]
