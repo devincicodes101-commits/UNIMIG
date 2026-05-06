@@ -25,7 +25,7 @@ function sanitizeRole(role: string): string {
   return VALID_ROLES.includes(normalised) ? normalised : 'unassigned'
 }
 
-async function queryRAGServer(query: string, role: string): Promise<RAGResponse> {
+export async function queryRAGServer(query: string, role: string): Promise<RAGResponse> {
   const safeRole = sanitizeRole(role)
   console.log(`[RAG] Querying with role="${safeRole}" (original="${role}"), url=${RAG_URL}/query`)
 

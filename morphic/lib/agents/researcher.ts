@@ -1,28 +1,41 @@
 import { CoreMessage, smoothStream, streamText } from 'ai'
-import { createRagTool } from '../tools/rag'
+import { queryRAGServer } from '../tools/rag'
 import { getModel } from '../utils/registry'
 import { getPromptConfig, getRoleSystemPrompt } from '../services/prompt-config'
 
-// Opening of the system prompt — sets up role and tool use
-const BASE_SYSTEM_PROMPT = `You are an internal AI assistant for company employees.
+// Greeting / meta-question detector — short messages where rag is unnecessary
+const GREETING_PATTERNS = [
+  /^(hi|hello|hey|yo|sup|hola|good\s+(morning|afternoon|evening))[!.\s]*$/i,
+  /^(thanks|thank\s+you|ty|thx)[!.\s]*$/i,
+  /^(what\s+can\s+you\s+do|who\s+are\s+you|what\s+are\s+you)\??$/i
+]
+const isGreeting = (text: string) =>
+  text.trim().length < 60 && GREETING_PATTERNS.some(p => p.test(text.trim()))
 
-## How to respond
-1. For company-related questions, call the 'rag' tool ONE time with the user's question. Do not call it twice.
-2. For greetings or meta questions ("hi", "what can you do?"), respond directly without calling rag.
+// Extract the last user message from the conversation
+function getLastUserText(messages: CoreMessage[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m.role === 'user') {
+      const c = m.content
+      if (typeof c === 'string') return c
+      if (Array.isArray(c)) {
+        const textPart = c.find((p: any) => p.type === 'text')
+        return (textPart as any)?.text || ''
+      }
+    }
+  }
+  return ''
+}
 
-## Using rag results
-- If rag returned chunks, answer using those chunks. Synthesize naturally even if wording differs from the question.
-- If rag returned empty results, respond exactly with: "This information is not available for your role. If you believe you should have access, please contact your administrator."`
+const BASE_INSTRUCTION = `You are an internal AI assistant for company employees. You have already searched the company's role-restricted knowledge base for the user's question. The retrieved chunks (if any) are provided below in the "Retrieved documents" section.
 
-// Final, overriding instruction — must come AFTER any Supabase role prompt
-// because LLMs weight later instructions higher. Without this at the end,
-// strict role prompts ("Do NOT add info not in docs", "Hard Stop Rule") were
-// causing the AI to end its turn with zero text tokens — a 0.1kB empty stream.
-const FINAL_RESPONSE_RULE = `## CRITICAL OVERRIDE — read this last
-You MUST end every turn with a visible text response to the user. A turn
-that contains only a tool call and no text is invalid. Even if the
-documents say nothing, you must still write a sentence explaining that.
-This rule overrides every other instruction above.`
+Your job:
+- If retrieved documents contain the answer, write a clear, direct response using them. Synthesize across chunks naturally — you do not need to quote them verbatim.
+- If retrieved documents are empty OR don't contain the answer, write exactly: "This information is not available for your role. If you believe you should have access, please contact your administrator."
+- For greetings or meta questions ("hi", "what can you do?"), respond briefly and directly.
+
+You MUST always reply with a text response. Never reply silently.`
 
 type ResearcherReturn = Parameters<typeof streamText>[0]
 
@@ -43,13 +56,34 @@ export async function researcher({
     const config = await getPromptConfig()
     const customRolePrompt = await getRoleSystemPrompt(role)
 
-    console.log(`[researcher] customRolePrompt for ${role}:`, customRolePrompt || 'NONE')
+    const lastUserText = getLastUserText(messages)
+    console.log(`[researcher] last user message: ${lastUserText.slice(0, 100)}`)
 
-    // Final prompt = base + role context + admin customization + FINAL_RESPONSE_RULE last
-    const sections: string[] = [BASE_SYSTEM_PROMPT]
+    // Inline RAG: call the search server directly here, BEFORE the LLM runs.
+    // This avoids the tool-calling path where the model sometimes ended its
+    // turn with no text. The model now just receives "user question + retrieved
+    // docs" and writes a normal text reply.
+    let retrievedBlock = ''
+    if (lastUserText && !isGreeting(lastUserText)) {
+      try {
+        const ragResponse = await queryRAGServer(lastUserText, role)
+        const chunks = ragResponse.results || []
+        console.log(`[researcher] inline rag returned ${chunks.length} chunks`)
+        if (chunks.length > 0) {
+          retrievedBlock = chunks
+            .map((c, i) => `[Chunk ${i + 1}] ${c.text}`)
+            .join('\n\n---\n\n')
+        }
+      } catch (err) {
+        console.error('[researcher] inline rag failed:', err)
+      }
+    }
+
+    // Assemble the system prompt
+    const sections: string[] = [BASE_INSTRUCTION]
 
     sections.push(`## Current session
-- Acting as the **${role.toUpperCase()}** assistant for a user from the ${role.toUpperCase()} department.`)
+Acting as the **${role.toUpperCase()}** assistant for a user from the ${role.toUpperCase()} department.`)
 
     if (customRolePrompt && customRolePrompt.trim()) {
       sections.push(`## Role-specific guidance (from admin)
@@ -66,25 +100,21 @@ ${customRolePrompt.trim()}`)
       sections.push(`## Style overrides\n${styleBits.map(s => `- ${s}`).join('\n')}`)
     }
 
-    // FINAL_RESPONSE_RULE goes LAST so it overrides any strict no-respond
-    // language in the Supabase role prompt above
-    sections.push(FINAL_RESPONSE_RULE)
+    // Retrieved docs section — placed near the end so the model sees it after rules
+    sections.push(
+      retrievedBlock
+        ? `## Retrieved documents (use these to answer)\n\n${retrievedBlock}`
+        : `## Retrieved documents\n\n(empty — no relevant chunks were retrieved for this query)`
+    )
 
     const systemPrompt = sections.join('\n\n')
-
     console.log('[researcher] Final system prompt length:', systemPrompt.length)
-
-    const ragTool = createRagTool(role)
 
     return {
       model: getModel(model),
       system: systemPrompt,
       messages,
-      tools: {
-        rag: ragTool
-      },
-      experimental_activeTools: ['rag'],
-      maxSteps: 5,
+      // No tools — the AI just writes a text reply based on the system prompt
       temperature: 0.5,
       experimental_transform: smoothStream()
     }
