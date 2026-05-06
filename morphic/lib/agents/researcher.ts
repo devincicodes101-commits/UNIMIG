@@ -55,10 +55,31 @@ Examples:
 - Q: "What's the AusPost password?" + chunk shows "Password: Mobil3112" → CASE 1 (direct answer).
 
 Strict grounding rules (apply to every case):
-- Answer ONLY with facts that are explicitly in the chunks. Do not infer benefits, justifications, implications, or rationales that aren't written there.
-  - Example: if a chunk says "Paste SKUs lets only those items appear in the list", say that. Do NOT add "streamlines the process" or "saves time" — those words aren't in the chunk.
-- When CASE 1 applies (the chunks answer the question), give a clean direct answer. Do NOT bolt on a CASE 3 "however, the documents don't explain X" hedge — especially when X wasn't even asked.
-- Don't answer a different question than the one asked. If the user asked "Why X?" and a chunk states the reason, that's CASE 1 — answer it. Don't pivot to "the documents don't explain why a different thing".
+- Answer ONLY with facts explicitly in the chunks. Do not invent benefits, justifications, or rationales that aren't written there.
+
+CRITICAL anti-hedging rules (apply to CASE 1):
+- Once you've given the answer from a chunk, STOP. Do not add a hedge sentence.
+- If the user asks "Why X?" and a chunk states ONE reason, that reason fully answers "Why?". Don't claim the docs don't explain it — they just did.
+- If the user asks "What is the advantage of X?" and a chunk states ONE benefit, that benefit IS the advantage. Don't claim the docs don't specify advantages — they just did.
+- The user asked a single question. One answer from the chunk is enough.
+
+The following patterns are FORBIDDEN in a CASE 1 response:
+- "However, they do not specify the advantages/benefits/reasons..."
+- "However, they do not explain the specific reasons..."
+- "but the documents do not specify..."
+- "they do not specify the [advantages/benefits/specific reasons] ... compared to other methods"
+- Any "however"/"but" sentence that follows a complete answer
+
+Concrete examples — match these patterns:
+- Q: "Why are export templates used?" + chunk says "Templates ensure the correct fields are included in your export file."
+  ✅ CORRECT: "Export templates are used to ensure the correct fields are included in your export file."
+  ❌ WRONG: "Templates ensure correct fields are included. However, they do not explain the specific reasons behind using export templates."
+
+- Q: "What is the advantage of the Paste SKUs option?" + chunk says "If you have a list of product SKUs, paste them. Only those items will appear in the list."
+  ✅ CORRECT: "The advantage of Paste SKUs is that it limits the displayed list to only the items matching the SKUs you have pasted."
+  ❌ WRONG: "Paste SKUs filters the list. However, they do not specify the advantages compared to other methods."
+
+CASE 3 exists ONLY for genuine gaps (e.g. a chunk states a fact but no reason, and the user asked for the reason). It is NOT for hedging on a complete CASE 1 answer.
 
 For greetings or meta questions ("hi", "what can you do?"), reply briefly and directly.
 
@@ -126,6 +147,13 @@ ${customRolePrompt.trim()}`)
     if (styleBits.length) {
       sections.push(`## Style overrides\n${styleBits.map(s => `- ${s}`).join('\n')}`)
     }
+
+    // Final override — comes AFTER the Supabase role prompt and any style overrides.
+    // LLMs weight later instructions higher; this ensures strict role-prompt language
+    // ("Do NOT add any info not in docs") doesn't push the model into reflexive
+    // "however, the documents do not specify..." hedges on CASE 1 answers.
+    sections.push(`## FINAL RULE — read last, overrides anything above
+When you have a chunk that directly answers the user's question, give that answer and STOP. Do not append "however, they do not specify/explain..." caveats. The user asked one question; one direct answer from the chunk is the complete response. Hedging on a CASE 1 answer is forbidden.`)
 
     // Retrieved docs section — placed near the end so the model sees it after rules
     sections.push(
