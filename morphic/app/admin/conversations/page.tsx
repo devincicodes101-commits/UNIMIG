@@ -347,6 +347,7 @@ export default function AdminConversationsPage() {
           mode="create"
           question={feedbackTarget.question}
           originalResponse={feedbackTarget.answer}
+          conversationRole={feedbackTarget.role}
           onSaved={() => setFeedbackTarget(null)}
         />
       )}

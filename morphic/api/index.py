@@ -702,6 +702,7 @@ class FeedbackPayload(BaseModel):
     ai_response: str
     correct_response: str
     timestamp: str
+    role: Optional[str] = None  # Role of the conversation being corrected — used for retrieval scoping
 
 class FeedbackUpdatePayload(BaseModel):
     vector_id: str
@@ -731,15 +732,20 @@ async def query_vector_db(request: QueryRequest):
         per_ns_top_k = min(request.top_k * 3, 20)
 
         # Step 2: Query Pinecone with the vector — feedback namespace first
-        feedback_response = index.query(
-            vector=query_vector,
-            namespace="feedback-namespace",
-            top_k=3,
-            include_metadata=True,
-        )
+        # ROLE SCOPING: non-admin/management roles only see feedback tagged with their own role
+        # (legacy untagged feedback is hidden from these roles to prevent cross-role leakage)
+        fb_query_kwargs = {
+            "vector": query_vector,
+            "namespace": "feedback-namespace",
+            "top_k": 3,
+            "include_metadata": True,
+        }
+        if role not in ("admin", "management"):
+            fb_query_kwargs["filter"] = {"role": {"$eq": role}}
+        feedback_response = index.query(**fb_query_kwargs)
         if feedback_response.matches:
             top_fb_score = feedback_response.matches[0].score
-            logger.info(f"[query] feedback-namespace: {len(feedback_response.matches)} hits (top={top_fb_score:.3f})")
+            logger.info(f"[query] feedback-namespace (role-scoped to {role}): {len(feedback_response.matches)} hits (top={top_fb_score:.3f})")
         else:
             logger.info(f"[query] feedback-namespace: no matches for role={role}")
 
@@ -758,12 +764,13 @@ async def query_vector_db(request: QueryRequest):
         # Sort combined results by score
         all_matches.sort(key=lambda x: x.score, reverse=True)
 
-        # Apply score threshold — prefer high-confidence chunks; fall back to top-k if nothing passes
-        SCORE_THRESHOLD = 0.20
+        # Apply score threshold — only return high-confidence chunks. If nothing passes,
+        # return EMPTY rather than weak off-topic matches. This is the role-boundary
+        # enforcement: an operations user asking about sales gets no chunks back.
+        SCORE_THRESHOLD = 0.30
         strong_matches = [m for m in all_matches if m.score >= SCORE_THRESHOLD]
-        candidate_pool = strong_matches if len(strong_matches) >= 2 else all_matches
-        top_matches = candidate_pool[:request.top_k]
-        logger.info(f"[query] {len(all_matches)} raw → {len(strong_matches)} above threshold → {len(top_matches)} returned")
+        top_matches = strong_matches[:request.top_k]
+        logger.info(f"[query] {len(all_matches)} raw → {len(strong_matches)} above {SCORE_THRESHOLD} threshold → {len(top_matches)} returned to role={role}")
 
         results = []
         source_docs = []
@@ -1619,6 +1626,7 @@ async def process_feedback(feedback: FeedbackPayload):
         context_text = f"Question: {feedback.question}\nImproved Response: {improved_response}"
         embedding = generate_embeddings([context_text])[0]
         vector_id = f"feedback_{feedback.timestamp}_{hash(feedback.question)}"
+        feedback_role = (feedback.role or "general").lower()
         metadata = {
             "text": context_text,
             "question": feedback.question,
@@ -1628,6 +1636,7 @@ async def process_feedback(feedback: FeedbackPayload):
             "timestamp": feedback.timestamp,
             "type": "feedback",
             "is_correction": True,
+            "role": feedback_role,  # ROLE SCOPING — feedback is only visible to this role + admin/management
         }
         index.upsert(vectors=[{"id": vector_id, "values": embedding, "metadata": metadata}], namespace="feedback-namespace")
         logger.info(f"[feedback] upserted vector_id={vector_id} to feedback-namespace")

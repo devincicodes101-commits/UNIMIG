@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useSession } from 'next-auth/react'
 import {
   Dialog,
   DialogContent,
@@ -26,6 +27,9 @@ interface FeedbackDialogProps {
   initialCorrection?: string
   vectorId?: string
   onSaved?: () => void
+  // Role of the conversation being corrected — required for role-scoped feedback.
+  // If omitted, falls back to the current user's session role.
+  conversationRole?: string
 }
 
 export function FeedbackDialog({
@@ -36,11 +40,15 @@ export function FeedbackDialog({
   originalResponse,
   initialCorrection = '',
   vectorId,
-  onSaved
+  onSaved,
+  conversationRole
 }: FeedbackDialogProps) {
   const [correction, setCorrection] = useState(initialCorrection)
   const [submitting, setSubmitting] = useState(false)
   const { toast } = useToast()
+  const { data: session } = useSession()
+  // Role to tag this feedback with: prefer the conversation's role, else the current user's role
+  const feedbackRole = conversationRole || (session?.user as any)?.role || 'general'
 
   useEffect(() => {
     if (open) {
@@ -74,7 +82,8 @@ export function FeedbackDialog({
             question,
             ai_response: originalResponse,
             correct_response: trimmed,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            role: feedbackRole  // Role-scope this feedback so it only surfaces for the same role
           })
         })
       } else {
